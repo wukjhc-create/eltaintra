@@ -5,8 +5,6 @@
 
 import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { supabase } from './supabase';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 // KONFIGURATION
@@ -590,60 +588,69 @@ function ProjektDetalje({ projekt, onBack }) {
   };
 
   const generatePDF = () => {
-    const doc = new jsPDF();
+    // Create printable content
+    const printContent = `
+      <html>
+      <head>
+        <title>Kalkulation - ${projekt.name}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 40px; }
+          h1 { color: #2E7D32; }
+          table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+          th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+          th { background: #2E7D32; color: white; }
+          .totals { margin-top: 20px; text-align: right; }
+          .total-line { font-size: 18px; font-weight: bold; color: #2E7D32; }
+        </style>
+      </head>
+      <body>
+        <h1>Elta Solar - Kalkulation</h1>
+        <p><strong>Projekt:</strong> ${projekt.name}</p>
+        <p><strong>Adresse:</strong> ${projekt.address || ''} ${projekt.zip || ''} ${projekt.city || ''}</p>
+        <p><strong>Dato:</strong> ${new Date().toLocaleDateString('da-DK')}</p>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Beskrivelse</th>
+              <th>Antal</th>
+              <th>Enhed</th>
+              <th>Timer</th>
+              <th>Materialer</th>
+              <th>Løn</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => `
+              <tr>
+                <td>${item.name}</td>
+                <td>${item.quantity}</td>
+                <td>${item.unit}</td>
+                <td>${(item.total_minutes / 60).toFixed(1)}</td>
+                <td>${formatMoney(item.material_cost_total)}</td>
+                <td>${formatMoney(item.labor_cost_total)}</td>
+                <td>${formatMoney(item.cost_total)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        
+        <div class="totals">
+          <p>Materialer: ${formatMoney(totals.materials)}</p>
+          <p>Løn: ${formatMoney(totals.labor)}</p>
+          <p>Avance (${markup}%): ${formatMoney(totals.db)}</p>
+          <p class="total-line">Total: ${formatMoney(totals.price)}</p>
+          <p>Akkord: ${(totals.akkordMinutes / 60).toFixed(1)} timer = ${formatMoney(totals.akkordAmount)}</p>
+        </div>
+      </body>
+      </html>
+    `;
     
-    // Header
-    doc.setFontSize(20);
-    doc.setTextColor(46, 125, 50);
-    doc.text('Elta Solar', 20, 25);
-    doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text('Kalkulation', 20, 32);
-    
-    // Projekt info
-    doc.setFontSize(14);
-    doc.setTextColor(0);
-    doc.text(projekt.name, 20, 50);
-    doc.setFontSize(10);
-    doc.text(`Adresse: ${projekt.address || ''} ${projekt.zip || ''} ${projekt.city || ''}`, 20, 58);
-    doc.text(`Type: ${projekt.project_type}`, 20, 64);
-    doc.text(`Dato: ${new Date().toLocaleDateString('da-DK')}`, 20, 70);
-    
-    // Tabel
-    const tableData = items.map(item => [
-      item.name,
-      item.quantity,
-      item.unit,
-      `${(item.total_minutes / 60).toFixed(1)} t`,
-      formatMoney(item.material_cost_total),
-      formatMoney(item.labor_cost_total),
-      formatMoney(item.cost_total)
-    ]);
-    
-    doc.autoTable({
-      startY: 80,
-      head: [['Beskrivelse', 'Antal', 'Enhed', 'Timer', 'Materialer', 'Løn', 'Total']],
-      body: tableData,
-      theme: 'striped',
-      headStyles: { fillColor: [46, 125, 50] }
-    });
-    
-    // Totaler
-    const finalY = doc.lastAutoTable.finalY + 10;
-    doc.setFontSize(12);
-    doc.text(`Materialer: ${formatMoney(totals.materials)}`, 120, finalY);
-    doc.text(`Løn: ${formatMoney(totals.labor)}`, 120, finalY + 7);
-    doc.text(`Avance (${markup}%): ${formatMoney(totals.db)}`, 120, finalY + 14);
-    doc.setFontSize(14);
-    doc.setTextColor(46, 125, 50);
-    doc.text(`Total: ${formatMoney(totals.price)}`, 120, finalY + 25);
-    
-    // Akkord
-    doc.setTextColor(0);
-    doc.setFontSize(10);
-    doc.text(`Akkord: ${(totals.akkordMinutes / 60).toFixed(1)} timer = ${formatMoney(totals.akkordAmount)}`, 20, finalY + 25);
-    
-    doc.save(`Kalkulation_${projekt.name.replace(/\s+/g, '_')}.pdf`);
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    printWindow.print();
   };
 
   return (
@@ -1453,81 +1460,73 @@ function TilbudDetalje({ tilbud, onBack }) {
   }, [tilbud.id]);
 
   const generatePDF = () => {
-    const doc = new jsPDF();
+    const printContent = `
+      <html>
+      <head>
+        <title>Tilbud - ${tilbud.quote_number}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
+          h1 { color: #2E7D32; margin-bottom: 5px; }
+          .tagline { color: #666; margin-bottom: 30px; }
+          .info { margin-bottom: 20px; }
+          .info p { margin: 5px 0; }
+          table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+          th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+          th { background: #2E7D32; color: white; }
+          .totals { margin-top: 20px; text-align: right; }
+          .total-line { font-size: 20px; font-weight: bold; color: #2E7D32; }
+          .terms { margin-top: 30px; font-size: 12px; color: #666; border-top: 1px solid #ddd; padding-top: 20px; }
+        </style>
+      </head>
+      <body>
+        <h1>Elta Solar</h1>
+        <p class="tagline">Fra sol til stikkontakt – nemt og sikkert</p>
+        
+        <h2>TILBUD</h2>
+        <div class="info">
+          <p><strong>Tilbudsnr:</strong> ${tilbud.quote_number}</p>
+          <p><strong>Dato:</strong> ${new Date(tilbud.created_at).toLocaleDateString('da-DK')}</p>
+          <p><strong>Gyldig til:</strong> ${tilbud.valid_until ? new Date(tilbud.valid_until).toLocaleDateString('da-DK') : '-'}</p>
+          <p><strong>Kunde:</strong> ${tilbud.customers?.company || tilbud.customers?.name || '-'}</p>
+        </div>
+        
+        <h3>${tilbud.title || ''}</h3>
+        ${tilbud.introduction_text ? `<p>${tilbud.introduction_text}</p>` : ''}
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Beskrivelse</th>
+              ${tilbud.show_unit_prices ? '<th>Antal</th><th>Enhed</th><th>Enhedspris</th>' : ''}
+              <th>Pris</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${lines.map(line => `
+              <tr>
+                <td>${line.description}</td>
+                ${tilbud.show_unit_prices ? `<td>${line.quantity}</td><td>${line.unit}</td><td>${formatMoney(line.unit_price)}</td>` : ''}
+                <td>${formatMoney(line.total_price)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        
+        <div class="totals">
+          <p>Subtotal ekskl. moms: ${formatMoney(tilbud.total_excl_vat)}</p>
+          <p>Moms (25%): ${formatMoney(tilbud.vat_amount)}</p>
+          <p class="total-line">Total inkl. moms: ${formatMoney(tilbud.total_incl_vat)}</p>
+        </div>
+        
+        ${tilbud.terms_text ? `<div class="terms"><p>${tilbud.terms_text}</p></div>` : ''}
+      </body>
+      </html>
+    `;
     
-    // Header
-    doc.setFontSize(24);
-    doc.setTextColor(46, 125, 50);
-    doc.text('Elta Solar', 20, 25);
-    doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text('Fra sol til stikkontakt – nemt og sikkert', 20, 32);
-    
-    // Tilbudsinfo
-    doc.setFontSize(16);
-    doc.setTextColor(0);
-    doc.text('TILBUD', 20, 50);
-    doc.setFontSize(10);
-    doc.text(`Tilbudsnr: ${tilbud.quote_number}`, 20, 58);
-    doc.text(`Dato: ${new Date(tilbud.created_at).toLocaleDateString('da-DK')}`, 20, 64);
-    doc.text(`Gyldig til: ${tilbud.valid_until ? new Date(tilbud.valid_until).toLocaleDateString('da-DK') : '-'}`, 20, 70);
-    
-    // Kunde
-    doc.text(`Kunde: ${tilbud.customers?.company || tilbud.customers?.name || '-'}`, 120, 58);
-    
-    // Titel
-    doc.setFontSize(14);
-    doc.text(tilbud.title || '', 20, 85);
-    
-    // Indledning
-    if (tilbud.introduction_text) {
-      doc.setFontSize(10);
-      const introLines = doc.splitTextToSize(tilbud.introduction_text, 170);
-      doc.text(introLines, 20, 95);
-    }
-    
-    // Tabel
-    const tableData = lines.map(line => {
-      const row = [line.description];
-      if (tilbud.show_unit_prices) {
-        row.push(line.quantity, line.unit, formatMoney(line.unit_price));
-      }
-      if (tilbud.show_line_totals || !tilbud.show_unit_prices) {
-        row.push(formatMoney(line.total_price));
-      }
-      return row;
-    });
-    
-    const headers = ['Beskrivelse'];
-    if (tilbud.show_unit_prices) headers.push('Antal', 'Enhed', 'Enhedspris');
-    if (tilbud.show_line_totals || !tilbud.show_unit_prices) headers.push('Pris');
-    
-    doc.autoTable({
-      startY: 115,
-      head: [headers],
-      body: tableData,
-      theme: 'striped',
-      headStyles: { fillColor: [46, 125, 50] }
-    });
-    
-    // Totaler
-    const finalY = doc.lastAutoTable.finalY + 15;
-    doc.setFontSize(10);
-    doc.text(`Subtotal ekskl. moms: ${formatMoney(tilbud.total_excl_vat)}`, 120, finalY);
-    doc.text(`Moms (25%): ${formatMoney(tilbud.vat_amount)}`, 120, finalY + 7);
-    doc.setFontSize(14);
-    doc.setTextColor(46, 125, 50);
-    doc.text(`Total inkl. moms: ${formatMoney(tilbud.total_incl_vat)}`, 120, finalY + 18);
-    
-    // Vilkår
-    if (tilbud.terms_text) {
-      doc.setFontSize(8);
-      doc.setTextColor(100);
-      const termsLines = doc.splitTextToSize(tilbud.terms_text, 170);
-      doc.text(termsLines, 20, finalY + 35);
-    }
-    
-    doc.save(`Tilbud_${tilbud.quote_number}.pdf`);
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    printWindow.print();
   };
 
   const sendQuote = async () => {
