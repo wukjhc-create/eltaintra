@@ -1843,10 +1843,10 @@ function IndstillingerSystem() {
   };
 
   const createBruger = async (form) => {
-    const tempPassword = generatePassword();
+    const password = form.password || generatePassword();
     const { error } = await supabase.auth.signUp({
       email: form.email,
-      password: tempPassword,
+      password: password,
       options: { data: { name: form.name, role: form.role } }
     });
     if (error) { alert('Fejl: ' + error.message); return; }
@@ -1862,7 +1862,7 @@ function IndstillingerSystem() {
     }, 1000);
     
     setShowCreateUser(false);
-    setShowSuccess({ ...form, password: tempPassword });
+    setShowSuccess({ ...form, password: password });
   };
 
   const updateBruger = async (form) => {
@@ -1877,6 +1877,18 @@ function IndstillingerSystem() {
     if (error) { alert('Fejl: ' + error.message); return; }
     setShowEditUser(null);
     loadAllData();
+  };
+
+  const resetPassword = async (email) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin
+    });
+    if (error) { 
+      alert('Fejl: ' + error.message); 
+      return false;
+    }
+    alert('Nulstillingslink sendt til ' + email);
+    return true;
   };
 
   // === LØNSATS FUNKTIONER ===
@@ -2139,7 +2151,7 @@ function IndstillingerSystem() {
 
       {showEditUser && (
         <Modal title="Rediger bruger" onClose={() => setShowEditUser(null)} wide>
-          <BrugerFormFull initial={showEditUser} onSave={updateBruger} onCancel={() => setShowEditUser(null)} isEdit />
+          <BrugerFormFull initial={showEditUser} onSave={updateBruger} onCancel={() => setShowEditUser(null)} onResetPassword={resetPassword} isEdit />
         </Modal>
       )}
 
@@ -2166,7 +2178,7 @@ function IndstillingerSystem() {
 }
 
 // Bruger form med rettigheder
-function BrugerFormFull({ onSave, onCancel, initial = {}, isEdit = false }) {
+function BrugerFormFull({ onSave, onCancel, initial = {}, isEdit = false, onResetPassword }) {
   const [form, setForm] = useState({
     id: initial.id || null,
     name: initial.name || '',
@@ -2175,8 +2187,17 @@ function BrugerFormFull({ onSave, onCancel, initial = {}, isEdit = false }) {
     title: initial.title || '',
     role: initial.role || 'saelger',
     permissions: initial.permissions || [],
-    active: initial.active !== false
+    active: initial.active !== false,
+    password: '',
+    confirmPassword: ''
   });
+  const [showPassword, setShowPassword] = useState(false);
+
+  const generateRandomPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    const pwd = Array(12).fill(0).map(() => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+    setForm({ ...form, password: pwd, confirmPassword: pwd });
+  };
 
   const allPermissions = [
     { id: 'projekter_se', label: 'Se projekter', group: 'Projekter' },
@@ -2203,6 +2224,22 @@ function BrugerFormFull({ onSave, onCancel, initial = {}, isEdit = false }) {
 
   const permissionGroups = [...new Set(allPermissions.map(p => p.group))];
 
+  const handleSave = () => {
+    if (!form.name || !form.email) {
+      alert('Navn og email er påkrævet');
+      return;
+    }
+    if (!isEdit && form.password && form.password !== form.confirmPassword) {
+      alert('Adgangskoderne matcher ikke');
+      return;
+    }
+    if (!isEdit && form.password && form.password.length < 6) {
+      alert('Adgangskoden skal være mindst 6 tegn');
+      return;
+    }
+    onSave(form);
+  };
+
   return (
     <div style={{ display: 'grid', gap: 20 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -2213,6 +2250,61 @@ function BrugerFormFull({ onSave, onCancel, initial = {}, isEdit = false }) {
         <FormField label="Email *" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} disabled={isEdit} />
         <FormField label="Telefon" value={form.phone} onChange={v => setForm({ ...form, phone: v })} />
       </div>
+
+      {/* Password sektion */}
+      {!isEdit ? (
+        <div style={{ background: COLORS.bg, padding: 20, borderRadius: 12 }}>
+          <h4 style={{ margin: '0 0 12px', fontSize: 14 }}>🔑 Adgangskode</h4>
+          <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 12 }}>
+            Vælg selv en adgangskode eller lad feltet være tomt for automatisk generering
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={STYLES.label}>Adgangskode</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input 
+                  type={showPassword ? 'text' : 'password'}
+                  value={form.password}
+                  onChange={e => setForm({ ...form, password: e.target.value })}
+                  placeholder="Min. 6 tegn"
+                  style={{ ...STYLES.input, flex: 1 }}
+                />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ ...STYLES.secondaryBtn, padding: '8px 12px' }}>
+                  {showPassword ? '🙈' : '👁️'}
+                </button>
+              </div>
+            </div>
+            <div>
+              <label style={STYLES.label}>Bekræft adgangskode</label>
+              <input 
+                type={showPassword ? 'text' : 'password'}
+                value={form.confirmPassword}
+                onChange={e => setForm({ ...form, confirmPassword: e.target.value })}
+                placeholder="Gentag adgangskode"
+                style={STYLES.input}
+              />
+            </div>
+          </div>
+          <button type="button" onClick={generateRandomPassword} style={{ ...STYLES.secondaryBtn, marginTop: 12, fontSize: 13 }}>
+            🎲 Generer tilfældig adgangskode
+          </button>
+          {!form.password && (
+            <p style={{ fontSize: 12, color: COLORS.info, marginTop: 8 }}>
+              💡 Hvis du ikke angiver en adgangskode, genereres en automatisk
+            </p>
+          )}
+        </div>
+      ) : (
+        <div style={{ background: COLORS.bg, padding: 20, borderRadius: 12 }}>
+          <h4 style={{ margin: '0 0 12px', fontSize: 14 }}>🔑 Adgangskode</h4>
+          <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 12 }}>
+            Send et link til brugeren så de kan nulstille deres adgangskode
+          </p>
+          <button type="button" onClick={() => onResetPassword && onResetPassword(form.email)} style={{ ...STYLES.secondaryBtn }}>
+            📧 Send nulstillingslink til {form.email}
+          </button>
+        </div>
+      )}
       
       <div>
         <label style={STYLES.label}>Rolle</label>
@@ -2271,7 +2363,7 @@ function BrugerFormFull({ onSave, onCancel, initial = {}, isEdit = false }) {
 
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
-        <button onClick={() => form.name && form.email && onSave(form)} style={STYLES.primaryBtn}>
+        <button onClick={handleSave} style={STYLES.primaryBtn}>
           {isEdit ? 'Gem ændringer' : 'Opret bruger'}
         </button>
       </div>
