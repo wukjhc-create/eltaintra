@@ -1283,6 +1283,12 @@ function IndstillingerSystem() {
   const [search, setSearch] = useState('');
   const [filterRolle, setFilterRolle] = useState('alle');
   const [filterAktiv, setFilterAktiv] = useState('alle');
+  
+  // Password-styring
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState(null);
 
   const currentUserId = user?.id;
 
@@ -1292,6 +1298,83 @@ function IndstillingerSystem() {
     const { data, error } = await supabase.from('profiles').select('id, email, name, role, permissions, phone, title, active, created_at').order('name');
     if (error) { console.error(error); return; }
     setBrugere(data || []);
+  };
+
+  const updateUserPassword = async () => {
+    if (!selectedBruger || selectedBruger.id === currentUserId) return;
+    
+    if (!newPassword || newPassword.length < 6) {
+      setPasswordMessage({ type: 'error', text: 'Password skal være mindst 6 tegn' });
+      return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+      setPasswordMessage({ type: 'error', text: 'Passwords matcher ikke' });
+      return;
+    }
+
+    setPasswordLoading(true);
+    setPasswordMessage(null);
+
+    try {
+      // Forsøg at kalde Edge Function (hvis den er oprettet)
+      const { data, error } = await supabase.functions.invoke('admin-update-password', {
+        body: { target_user_id: selectedBruger.id, new_password: newPassword }
+      });
+
+      if (error) {
+        // Edge Function findes ikke eller fejlede - send reset email i stedet
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(selectedBruger.email, {
+          redirectTo: window.location.origin
+        });
+        
+        if (resetError) throw resetError;
+        
+        setPasswordMessage({ 
+          type: 'success', 
+          text: `Password reset email sendt til ${selectedBruger.email}. Brugeren kan nu sætte et nyt password.`
+        });
+        setNewPassword('');
+        setConfirmPassword('');
+        return;
+      }
+
+      setPasswordMessage({ type: 'success', text: 'Password opdateret!' });
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      setPasswordMessage({ type: 'error', text: 'Fejl: ' + err.message });
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const sendPasswordResetEmail = async () => {
+    if (!selectedBruger) return;
+    
+    setPasswordLoading(true);
+    setPasswordMessage(null);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(selectedBruger.email, {
+        redirectTo: window.location.origin
+      });
+      
+      if (error) throw error;
+      
+      setPasswordMessage({ type: 'success', text: `Password reset link sendt til ${selectedBruger.email}` });
+    } catch (err) {
+      setPasswordMessage({ type: 'error', text: 'Fejl: ' + err.message });
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const generateTempPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    const pwd = Array(12).fill(0).map(() => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+    setNewPassword(pwd);
+    setConfirmPassword(pwd);
   };
 
   const saveBruger = async (form) => {
@@ -1408,6 +1491,96 @@ function IndstillingerSystem() {
             </div>
           )}
         </div>
+
+        {/* Password-styring - kun for andre brugere (ikke sig selv) */}
+        {selectedBruger.id !== currentUserId && (
+          <>
+            <div style={{ marginTop: 24, marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>🔐 Login & Password</h2>
+            </div>
+
+            <div style={{ ...STYLES.card }}>
+              {/* Besked */}
+              {passwordMessage && (
+                <div style={{ 
+                  padding: 12, 
+                  borderRadius: 8, 
+                  marginBottom: 16,
+                  background: passwordMessage.type === 'success' ? '#D1FAE5' : '#FEE2E2',
+                  color: passwordMessage.type === 'success' ? '#059669' : '#DC2626'
+                }}>
+                  {passwordMessage.text}
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gap: 16 }}>
+                <div>
+                  <label style={STYLES.label}>Nyt password</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input 
+                      type="text" 
+                      value={newPassword} 
+                      onChange={e => setNewPassword(e.target.value)} 
+                      style={{ ...STYLES.input, flex: 1 }} 
+                      placeholder="Mindst 6 tegn"
+                    />
+                    <button onClick={generateTempPassword} style={STYLES.secondaryBtn}>Generer</button>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={STYLES.label}>Gentag password</label>
+                  <input 
+                    type="text" 
+                    value={confirmPassword} 
+                    onChange={e => setConfirmPassword(e.target.value)} 
+                    style={STYLES.input} 
+                    placeholder="Gentag password"
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  <button 
+                    onClick={updateUserPassword} 
+                    disabled={passwordLoading || !newPassword || !confirmPassword}
+                    style={{ 
+                      ...STYLES.primaryBtn, 
+                      opacity: (passwordLoading || !newPassword || !confirmPassword) ? 0.6 : 1,
+                      cursor: (passwordLoading || !newPassword || !confirmPassword) ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {passwordLoading ? 'Arbejder...' : '🔑 Opdater password'}
+                  </button>
+                  
+                  <button 
+                    onClick={sendPasswordResetEmail} 
+                    disabled={passwordLoading}
+                    style={{ 
+                      ...STYLES.secondaryBtn,
+                      opacity: passwordLoading ? 0.6 : 1
+                    }}
+                  >
+                    📧 Send reset-link via email
+                  </button>
+                </div>
+
+                <div style={{ fontSize: 13, color: COLORS.textLight, marginTop: 8 }}>
+                  💡 <strong>Tip:</strong> Du kan enten sætte et nyt password direkte, eller sende et reset-link til brugerens email.
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Advarsel hvis man ser sin egen profil */}
+        {selectedBruger.id === currentUserId && (
+          <div style={{ ...STYLES.card, marginTop: 24, background: '#FEF3C7', borderColor: '#F59E0B' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#92400E' }}>
+              <span>⚠️</span>
+              <span>Du kan ikke ændre dit eget password her. Brug "Glemt password" på login-siden.</span>
+            </div>
+          </div>
+        )}
 
         {showModal && (
           <Modal title="Rediger bruger" onClose={() => { setShowModal(false); setEditingBruger(null); }}>
