@@ -730,6 +730,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const [editingLinje, setEditingLinje] = useState(null);
   const [showPakkeVaelger, setShowPakkeVaelger] = useState(false);
   const [showProduktVaelger, setShowProduktVaelger] = useState(false);
+  const [marginSettings, setMarginSettings] = useState(null);
 
   // Søgning, filtrering, sortering
   const [search, setSearch] = useState('');
@@ -771,13 +772,15 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   }, [selectedTilbud?.id]);
 
   const loadData = async () => {
-    const [pRes, kRes] = await Promise.all([
+    const [pRes, kRes, mRes] = await Promise.all([
       supabase.from('projects').select('id, customer_id, name, description, address, zip, city, status, created_at, customers(id, name, company, email, phone)').order('created_at', { ascending: false }),
-      supabase.from('customers').select('id, name, company')
+      supabase.from('customers').select('id, name, company'),
+      supabase.from('margin_settings').select('*').limit(1).single()
     ]);
     if (pRes.error) { alert('Fejl: ' + pRes.error.message); return; }
     setProjekter(pRes.data || []);
     setKunder(kRes.data || []);
+    if (mRes.data) setMarginSettings(mRes.data);
   };
 
   const loadProjektFiler = async (projektId) => {
@@ -1056,6 +1059,42 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     return { totalKost, totalSalg, dbKr, dbPct };
   };
 
+  // Beregn DB for enkelt linje
+  const calcLinjeDB = (l) => {
+    const kost = l.quantity * l.cost_price;
+    const salg = l.quantity * l.sale_price;
+    const dbKr = salg - kost;
+    const dbPct = salg > 0 ? (dbKr / salg) * 100 : 0;
+    return { kost, salg, dbKr, dbPct };
+  };
+
+  // Hent minimum margin for type
+  const getMinMargin = (type) => {
+    if (!marginSettings) return 25;
+    switch(type) {
+      case 'materiale': return marginSettings.min_margin_materiale || 20;
+      case 'timer': return marginSettings.min_margin_timer || 30;
+      case 'ydelse': return marginSettings.min_margin_ydelse || 25;
+      default: return marginSettings.min_margin_global || 25;
+    }
+  };
+
+  // Farve baseret på margin
+  const getMarginColor = (dbPct, type = null) => {
+    const minMargin = type ? getMinMargin(type) : (marginSettings?.min_margin_global || 25);
+    const warning = marginSettings?.warning_threshold || 5;
+    
+    if (dbPct < minMargin) return { bg: '#FEE2E2', color: '#DC2626' }; // Rød
+    if (dbPct < minMargin + warning) return { bg: '#FEF3C7', color: '#D97706' }; // Gul
+    return { bg: '#D1FAE5', color: '#059669' }; // Grøn
+  };
+
+  // Check om tilbud er under minimum
+  const isUnderMinimum = (dbPct) => {
+    const minMargin = marginSettings?.min_margin_global || 25;
+    return dbPct < minMargin;
+  };
+
   const typeLabels = { materiale: '🔩 Materiale', timer: '⏱️ Timer', ydelse: '📋 Ydelse' };
   const typeColors = { materiale: '#3B82F6', timer: '#F59E0B', ydelse: '#8B5CF6' };
 
@@ -1282,9 +1321,34 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   // Tilbud-detaljevisning
   if (selectedTilbud && selectedProjekt) {
     const totals = calcTilbudTotals(tilbudLinjer);
+    const marginColor = getMarginColor(totals.dbPct);
+    const underMinimum = isUnderMinimum(totals.dbPct);
+    
     return (
       <div>
         <button onClick={() => setSelectedTilbud(null)} style={{ ...STYLES.secondaryBtn, marginBottom: 24 }}>← Tilbage til projekt</button>
+        
+        {/* Advarsel hvis under minimum */}
+        {canManage && underMinimum && (
+          <div style={{ 
+            background: '#FEE2E2', 
+            border: '1px solid #FECACA', 
+            borderRadius: 8, 
+            padding: 16, 
+            marginBottom: 24,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12
+          }}>
+            <span style={{ fontSize: 24 }}>⚠️</span>
+            <div>
+              <div style={{ fontWeight: 600, color: '#DC2626' }}>Dette tilbud er under minimum dækningsbidrag</div>
+              <div style={{ fontSize: 13, color: '#B91C1C' }}>
+                Nuværende: {totals.dbPct.toFixed(1)}% | Minimum: {marginSettings?.min_margin_global || 25}%
+              </div>
+            </div>
+          </div>
+        )}
         
         <div style={{ ...STYLES.card, marginBottom: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -1314,25 +1378,34 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
           )}
         </div>
 
-        {/* Totaler */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
-          <div style={{ ...STYLES.card, textAlign: 'center' }}>
-            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>KOSTPRIS</div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{totals.totalKost.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+        {/* Økonomi-overblik - KUN for managers */}
+        {canManage ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+            <div style={{ ...STYLES.card, textAlign: 'center' }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>KOSTPRIS</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>{totals.totalKost.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+            </div>
+            <div style={{ ...STYLES.card, textAlign: 'center' }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>SALGSPRIS</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary }}>{totals.totalSalg.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+            </div>
+            <div style={{ ...STYLES.card, textAlign: 'center', background: marginColor.bg }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>DB (KR.)</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: marginColor.color }}>{totals.dbKr.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+            </div>
+            <div style={{ ...STYLES.card, textAlign: 'center', background: marginColor.bg }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>DB (%)</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: marginColor.color }}>{totals.dbPct.toFixed(1)}%</div>
+              <div style={{ fontSize: 10, color: COLORS.textLight, marginTop: 2 }}>Min: {marginSettings?.min_margin_global || 25}%</div>
+            </div>
           </div>
-          <div style={{ ...STYLES.card, textAlign: 'center' }}>
-            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>SALGSPRIS</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary }}>{totals.totalSalg.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+        ) : (
+          /* Kun salgspris for montør/elev */
+          <div style={{ ...STYLES.card, marginBottom: 24, textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>TOTALPRIS</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: COLORS.primary }}>{totals.totalSalg.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
           </div>
-          <div style={{ ...STYLES.card, textAlign: 'center' }}>
-            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>DB (KR.)</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: totals.dbKr >= 0 ? '#059669' : '#DC2626' }}>{totals.dbKr.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
-          </div>
-          <div style={{ ...STYLES.card, textAlign: 'center' }}>
-            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>DB (%)</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: totals.dbPct >= 0 ? '#059669' : '#DC2626' }}>{totals.dbPct.toFixed(1)}%</div>
-          </div>
-        </div>
+        )}
 
         {/* Vis linjer toggle */}
         {canManage && (
@@ -1371,36 +1444,55 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
                 <th style={STYLES.th}>Type</th>
                 <th style={STYLES.th}>Beskrivelse</th>
                 <th style={{ ...STYLES.th, textAlign: 'right' }}>Antal</th>
-                <th style={{ ...STYLES.th, textAlign: 'right' }}>Kost</th>
+                {canManage && <th style={{ ...STYLES.th, textAlign: 'right' }}>Kost</th>}
                 <th style={{ ...STYLES.th, textAlign: 'right' }}>Salg</th>
                 <th style={{ ...STYLES.th, textAlign: 'right' }}>Total</th>
+                {canManage && <th style={{ ...STYLES.th, textAlign: 'right' }}>DB %</th>}
                 <th style={{ ...STYLES.th, textAlign: 'center' }}>Vis</th>
                 {canManage && <th style={STYLES.th}></th>}
               </tr></thead>
               <tbody>
-                {tilbudLinjer.map(l => (
-                  <tr key={l.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                    <td style={STYLES.td}>
-                      <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: `${typeColors[l.type]}20`, color: typeColors[l.type] }}>
-                        {typeLabels[l.type]}
-                      </span>
-                    </td>
-                    <td style={STYLES.td}>{l.title}</td>
-                    <td style={{ ...STYLES.td, textAlign: 'right' }}>{l.quantity}</td>
-                    <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.cost_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
-                    <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
-                    <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>{(l.quantity * l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
-                    <td style={{ ...STYLES.td, textAlign: 'center' }}>{l.show_on_quote ? '✓' : '–'}</td>
-                    {canManage && (
+                {tilbudLinjer.map(l => {
+                  const linjeDB = calcLinjeDB(l);
+                  const linjeMarginColor = getMarginColor(linjeDB.dbPct, l.type);
+                  return (
+                    <tr key={l.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
                       <td style={STYLES.td}>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <button onClick={() => { setEditingLinje(l); setShowLinjeModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>Ret</button>
-                          <button onClick={() => deleteTilbudLinje(l)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>Slet</button>
-                        </div>
+                        <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: `${typeColors[l.type]}20`, color: typeColors[l.type] }}>
+                          {typeLabels[l.type]}
+                        </span>
                       </td>
-                    )}
-                  </tr>
-                ))}
+                      <td style={STYLES.td}>{l.title}</td>
+                      <td style={{ ...STYLES.td, textAlign: 'right' }}>{l.quantity}</td>
+                      {canManage && <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.cost_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>}
+                      <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>{(l.quantity * l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
+                      {canManage && (
+                        <td style={{ ...STYLES.td, textAlign: 'right' }}>
+                          <span style={{ 
+                            padding: '2px 6px', 
+                            borderRadius: 4, 
+                            fontSize: 11, 
+                            fontWeight: 600,
+                            background: linjeMarginColor.bg, 
+                            color: linjeMarginColor.color 
+                          }}>
+                            {linjeDB.dbPct.toFixed(1)}%
+                          </span>
+                        </td>
+                      )}
+                      <td style={{ ...STYLES.td, textAlign: 'center' }}>{l.show_on_quote ? '✓' : '–'}</td>
+                      {canManage && (
+                        <td style={STYLES.td}>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button onClick={() => { setEditingLinje(l); setShowLinjeModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>Ret</button>
+                            <button onClick={() => deleteTilbudLinje(l)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>Slet</button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -2897,13 +2989,37 @@ function IndstillingerSystem() {
   const [filterRolle, setFilterRolle] = useState('alle');
   const [filterAktiv, setFilterAktiv] = useState('alle');
   
+  // Margin settings
+  const [marginSettings, setMarginSettings] = useState(null);
+  const [showMarginModal, setShowMarginModal] = useState(false);
+  
   // Password reset
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState(null);
 
   const currentUserId = user?.id;
 
-  useEffect(() => { loadBrugere(); }, []);
+  useEffect(() => { loadBrugere(); loadMarginSettings(); }, []);
+
+  const loadMarginSettings = async () => {
+    const { data } = await supabase.from('margin_settings').select('*').limit(1).single();
+    if (data) setMarginSettings(data);
+  };
+
+  const saveMarginSettings = async (form) => {
+    const { error } = await supabase.from('margin_settings').update({
+      min_margin_global: parseFloat(form.min_margin_global) || 25,
+      min_margin_materiale: parseFloat(form.min_margin_materiale) || 20,
+      min_margin_timer: parseFloat(form.min_margin_timer) || 30,
+      min_margin_ydelse: parseFloat(form.min_margin_ydelse) || 25,
+      warning_threshold: parseFloat(form.warning_threshold) || 5,
+      updated_at: new Date().toISOString(),
+      updated_by: user?.id
+    }).eq('id', marginSettings.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setShowMarginModal(false);
+    loadMarginSettings();
+  };
 
   const loadBrugere = async () => {
     const { data, error } = await supabase.from('profiles').select('id, email, name, role, permissions, phone, title, active, created_at').order('name');
@@ -3115,6 +3231,46 @@ function IndstillingerSystem() {
         <button onClick={() => { setEditingBruger(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Ny bruger</button>
       </div>
 
+      {/* Margin Settings Panel */}
+      <div style={{ ...STYLES.card, marginBottom: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>📊 Dækningsbidrag (DB) Grænser</h2>
+            <p style={{ color: COLORS.textLight, marginTop: 4, marginBottom: 0 }}>Minimum krav til dækningsbidrag pr. type</p>
+          </div>
+          <button onClick={() => setShowMarginModal(true)} style={STYLES.secondaryBtn}>Rediger</button>
+        </div>
+        {marginSettings ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
+            <div style={{ textAlign: 'center', padding: 16, background: COLORS.bg, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>GLOBAL MIN.</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary }}>{marginSettings.min_margin_global}%</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 16, background: '#EFF6FF', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>🔩 MATERIALE</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#3B82F6' }}>{marginSettings.min_margin_materiale}%</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 16, background: '#FFFBEB', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>⏱️ TIMER</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#F59E0B' }}>{marginSettings.min_margin_timer}%</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 16, background: '#F5F3FF', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>📋 YDELSE</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#8B5CF6' }}>{marginSettings.min_margin_ydelse}%</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 16, background: '#FEF3C7', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>⚠️ ADVARSEL</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#D97706' }}>+{marginSettings.warning_threshold}%</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', padding: 24, color: COLORS.textLight }}>Indlæser...</div>
+        )}
+      </div>
+
+      {/* Brugere sektion */}
+      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>👥 Brugere</h2>
+
       {/* Søgning og filtrering */}
       <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
@@ -3190,6 +3346,59 @@ function IndstillingerSystem() {
           <BrugerForm initial={editingBruger} currentUserId={currentUserId} onSave={editingBruger ? saveBruger : createBruger} onCancel={() => { setShowModal(false); setEditingBruger(null); }} isEdit={!!editingBruger} />
         </Modal>
       )}
+
+      {showMarginModal && (
+        <Modal title="Rediger DB-grænser" onClose={() => setShowMarginModal(false)}>
+          <MarginSettingsForm initial={marginSettings} onSave={saveMarginSettings} onCancel={() => setShowMarginModal(false)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// Margin Settings Form
+function MarginSettingsForm({ initial, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    min_margin_global: initial?.min_margin_global || 25,
+    min_margin_materiale: initial?.min_margin_materiale || 20,
+    min_margin_timer: initial?.min_margin_timer || 30,
+    min_margin_ydelse: initial?.min_margin_ydelse || 25,
+    warning_threshold: initial?.warning_threshold || 5
+  });
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div style={{ background: '#EFF6FF', padding: 12, borderRadius: 8, fontSize: 14, color: '#1D4ED8' }}>
+        💡 Disse grænser bruges til at advare når et tilbud eller en linje har for lavt dækningsbidrag.
+      </div>
+      <div>
+        <label style={STYLES.label}>Global minimum DB %</label>
+        <input type="number" value={form.min_margin_global} onChange={e => setForm({ ...form, min_margin_global: e.target.value })} style={STYLES.input} min="0" max="100" step="0.1" />
+        <div style={{ fontSize: 12, color: COLORS.textLight, marginTop: 4 }}>Bruges til samlet tilbud-vurdering</div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>🔩 Materiale min. %</label>
+          <input type="number" value={form.min_margin_materiale} onChange={e => setForm({ ...form, min_margin_materiale: e.target.value })} style={STYLES.input} min="0" max="100" step="0.1" />
+        </div>
+        <div>
+          <label style={STYLES.label}>⏱️ Timer min. %</label>
+          <input type="number" value={form.min_margin_timer} onChange={e => setForm({ ...form, min_margin_timer: e.target.value })} style={STYLES.input} min="0" max="100" step="0.1" />
+        </div>
+        <div>
+          <label style={STYLES.label}>📋 Ydelse min. %</label>
+          <input type="number" value={form.min_margin_ydelse} onChange={e => setForm({ ...form, min_margin_ydelse: e.target.value })} style={STYLES.input} min="0" max="100" step="0.1" />
+        </div>
+      </div>
+      <div>
+        <label style={STYLES.label}>⚠️ Advarselsgrænse (% over minimum)</label>
+        <input type="number" value={form.warning_threshold} onChange={e => setForm({ ...form, warning_threshold: e.target.value })} style={STYLES.input} min="0" max="50" step="0.1" />
+        <div style={{ fontSize: 12, color: COLORS.textLight, marginTop: 4 }}>Gul advarsel når DB er mellem minimum og minimum + denne værdi</div>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={() => onSave(form)} style={STYLES.primaryBtn}>Gem</button>
+      </div>
     </div>
   );
 }
