@@ -98,6 +98,7 @@ export default function App() {
               {section === 'kunder' && <KunderSystem onNavigateToProjekt={navigateToProjekt} />}
               {section === 'projekter' && <ProjekterSystem initialProjektId={selectedProjektId} onProjektOpened={() => setSelectedProjektId(null)} />}
               {section === 'pakker' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <PakkerSystem />}
+              {section === 'katalog' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <VarekatalogSystem />}
               {section === 'indstillinger' && profile?.role === 'admin' && <IndstillingerSystem />}
             </main>
           </>
@@ -156,6 +157,7 @@ function Navigation({ section, setSection }) {
     { id: 'kunder', label: 'Kunder', icon: '👥' },
     { id: 'projekter', label: 'Projekter', icon: '🔧' },
     { id: 'pakker', label: 'Pakker', icon: '📦', managerOnly: true },
+    { id: 'katalog', label: 'Varekatalog', icon: '🏷️', managerOnly: true },
     { id: 'indstillinger', label: 'Indstillinger', icon: '⚙️', adminOnly: true },
   ];
 
@@ -727,6 +729,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const [showLinjeModal, setShowLinjeModal] = useState(false);
   const [editingLinje, setEditingLinje] = useState(null);
   const [showPakkeVaelger, setShowPakkeVaelger] = useState(false);
+  const [showProduktVaelger, setShowProduktVaelger] = useState(false);
 
   // Søgning, filtrering, sortering
   const [search, setSearch] = useState('');
@@ -947,6 +950,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const saveTilbudLinje = async (form) => {
     const payload = {
       quote_id: selectedTilbud.id,
+      product_id: form.product_id || null,
       type: form.type || 'materiale',
       title: form.title,
       quantity: parseFloat(form.quantity) || 1,
@@ -965,6 +969,26 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     }
     setShowLinjeModal(false);
     setEditingLinje(null);
+    loadTilbudLinjer(selectedTilbud.id);
+    updateTilbudTotals();
+  };
+
+  // Tilføj linje fra varekatalog
+  const addProduktTilLinje = async (produkt) => {
+    const payload = {
+      quote_id: selectedTilbud.id,
+      product_id: produkt.id,
+      type: produkt.type,
+      title: produkt.title,
+      quantity: 1,
+      cost_price: produkt.cost_price,
+      sale_price: produkt.sale_price,
+      show_on_quote: true,
+      sort_order: tilbudLinjer.length
+    };
+    const { error } = await supabase.from('quote_lines').insert([payload]);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setShowProduktVaelger(false);
     loadTilbudLinjer(selectedTilbud.id);
     updateTilbudTotals();
   };
@@ -993,6 +1017,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     
     const linesToInsert = lines.map((l, i) => ({
       quote_id: selectedTilbud.id,
+      product_id: l.product_id || null,
       type: l.type,
       title: l.title,
       quantity: l.quantity,
@@ -1328,6 +1353,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
           <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Linjer ({tilbudLinjer.length})</h2>
           {canManage && (
             <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setShowProduktVaelger(true)} style={STYLES.secondaryBtn}>🏷️ Fra katalog</button>
               <button onClick={() => setShowPakkeVaelger(true)} style={STYLES.secondaryBtn}>📦 Indsæt pakke</button>
               <button onClick={() => { setEditingLinje(null); setShowLinjeModal(true); }} style={STYLES.primaryBtn}>+ Tilføj linje</button>
             </div>
@@ -1395,6 +1421,12 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
         {showPakkeVaelger && (
           <Modal title="Indsæt pakke" onClose={() => setShowPakkeVaelger(false)}>
             <PakkeVaelger onSelect={insertPakkeLinjer} onCancel={() => setShowPakkeVaelger(false)} />
+          </Modal>
+        )}
+
+        {showProduktVaelger && (
+          <Modal title="Tilføj fra varekatalog" onClose={() => setShowProduktVaelger(false)}>
+            <ProduktVaelger onSelect={addProduktTilLinje} onCancel={() => setShowProduktVaelger(false)} />
           </Modal>
         )}
       </div>
@@ -2064,6 +2096,7 @@ function PakkerSystem() {
   const [pakkeLinjer, setPakkeLinjer] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showLinjeModal, setShowLinjeModal] = useState(false);
+  const [showProduktModal, setShowProduktModal] = useState(false);
   const [editingPakke, setEditingPakke] = useState(null);
   const [editingLinje, setEditingLinje] = useState(null);
   const [search, setSearch] = useState('');
@@ -2120,6 +2153,7 @@ function PakkerSystem() {
   const saveLinje = async (form) => {
     const payload = {
       package_id: selectedPakke.id,
+      product_id: form.product_id || null,
       type: form.type || 'materiale',
       title: form.title,
       quantity: parseFloat(form.quantity) || 1,
@@ -2137,6 +2171,25 @@ function PakkerSystem() {
     }
     setShowLinjeModal(false);
     setEditingLinje(null);
+    loadPakkeLinjer(selectedPakke.id);
+    updatePakkePrice();
+  };
+
+  // Tilføj linje fra varekatalog
+  const addProduktLinje = async (produkt) => {
+    const payload = {
+      package_id: selectedPakke.id,
+      product_id: produkt.id,
+      type: produkt.type,
+      title: produkt.title,
+      quantity: 1,
+      cost_price: produkt.cost_price,
+      sale_price: produkt.sale_price,
+      sort_order: pakkeLinjer.length
+    };
+    const { error } = await supabase.from('package_lines').insert([payload]);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setShowProduktModal(false);
     loadPakkeLinjer(selectedPakke.id);
     updatePakkePrice();
   };
@@ -2251,7 +2304,10 @@ function PakkerSystem() {
         {/* Linjer */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Linjer ({pakkeLinjer.length})</h2>
-          <button onClick={() => { setEditingLinje(null); setShowLinjeModal(true); }} style={STYLES.primaryBtn}>+ Tilføj linje</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setShowProduktModal(true)} style={STYLES.secondaryBtn}>🏷️ Fra katalog</button>
+            <button onClick={() => { setEditingLinje(null); setShowLinjeModal(true); }} style={STYLES.primaryBtn}>+ Tilføj linje</button>
+          </div>
         </div>
 
         <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
@@ -2305,6 +2361,12 @@ function PakkerSystem() {
         {showLinjeModal && (
           <Modal title={editingLinje ? 'Rediger linje' : 'Tilføj linje'} onClose={() => { setShowLinjeModal(false); setEditingLinje(null); }}>
             <LinjeForm initial={editingLinje} onSave={saveLinje} onCancel={() => { setShowLinjeModal(false); setEditingLinje(null); }} />
+          </Modal>
+        )}
+
+        {showProduktModal && (
+          <Modal title="Tilføj fra varekatalog" onClose={() => setShowProduktModal(false)}>
+            <ProduktVaelger onSelect={addProduktLinje} onCancel={() => setShowProduktModal(false)} />
           </Modal>
         )}
       </div>
@@ -2472,6 +2534,348 @@ function LinjeForm({ initial, onSave, onCancel }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
         <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem' : 'Tilføj'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// VAREKATALOG SYSTEM (Produkter og timer)
+// Database: id, sku, title, type, unit, cost_price, sale_price, category, active, created_at
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function VarekatalogSystem() {
+  const [produkter, setProdukter] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editingProdukt, setEditingProdukt] = useState(null);
+  const [search, setSearch] = useState('');
+  const [filterType, setFilterType] = useState('alle');
+  const [filterKategori, setFilterKategori] = useState('alle');
+  const [filterAktiv, setFilterAktiv] = useState('aktiv');
+
+  useEffect(() => { loadProdukter(); }, []);
+
+  const loadProdukter = async () => {
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .order('title');
+    if (error) { console.error(error); return; }
+    setProdukter(data || []);
+  };
+
+  const saveProdukt = async (form) => {
+    const payload = {
+      sku: form.sku || null,
+      title: form.title,
+      type: form.type || 'materiale',
+      unit: form.unit || 'stk',
+      cost_price: parseFloat(form.cost_price) || 0,
+      sale_price: parseFloat(form.sale_price) || 0,
+      category: form.category || null,
+      active: form.active !== false
+    };
+
+    if (editingProdukt) {
+      const { error } = await supabase.from('products').update(payload).eq('id', editingProdukt.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    } else {
+      const { error } = await supabase.from('products').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    }
+    setShowModal(false);
+    setEditingProdukt(null);
+    loadProdukter();
+  };
+
+  const deleteProdukt = async (produkt) => {
+    if (!confirm(`Slet "${produkt.title}"?`)) return;
+    const { error } = await supabase.from('products').delete().eq('id', produkt.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadProdukter();
+  };
+
+  const toggleAktiv = async (produkt) => {
+    const { error } = await supabase.from('products').update({ active: !produkt.active }).eq('id', produkt.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadProdukter();
+  };
+
+  // Kategorier fra data
+  const kategorier = [...new Set(produkter.filter(p => p.category).map(p => p.category))].sort();
+
+  // Filtrering
+  let filteredProdukter = produkter.filter(p => {
+    if (filterAktiv === 'aktiv' && !p.active) return false;
+    if (filterAktiv === 'inaktiv' && p.active) return false;
+    if (filterType !== 'alle' && p.type !== filterType) return false;
+    if (filterKategori !== 'alle' && p.category !== filterKategori) return false;
+    return true;
+  });
+
+  // Søgning
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filteredProdukter = filteredProdukter.filter(p =>
+      (p.sku || '').toLowerCase().includes(s) ||
+      (p.title || '').toLowerCase().includes(s) ||
+      (p.category || '').toLowerCase().includes(s)
+    );
+  }
+
+  const typeLabels = { materiale: '🔩 Materiale', timer: '⏱️ Timer', ydelse: '📋 Ydelse' };
+  const typeColors = { materiale: '#3B82F6', timer: '#F59E0B', ydelse: '#8B5CF6' };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>🏷️ Varekatalog</h1>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filteredProdukter.length} af {produkter.length} produkter</p>
+        </div>
+        <button onClick={() => { setEditingProdukt(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Nyt produkt</button>
+      </div>
+
+      {/* Søgning og filtrering */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 300px' }}>
+            <input type="text" placeholder="🔍 Søg efter varenr, navn eller kategori..." value={search} onChange={e => setSearch(e.target.value)} style={STYLES.input} />
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterType} onChange={e => setFilterType(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle typer</option>
+              <option value="materiale">🔩 Materiale</option>
+              <option value="timer">⏱️ Timer</option>
+              <option value="ydelse">📋 Ydelse</option>
+            </select>
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterKategori} onChange={e => setFilterKategori(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle kategorier</option>
+              {kategorier.map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterAktiv} onChange={e => setFilterAktiv(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle</option>
+              <option value="aktiv">Aktive</option>
+              <option value="inaktiv">Inaktive</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {produkter.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48 }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🏷️</div>
+          <h3>Ingen produkter endnu</h3>
+          <p style={{ color: COLORS.textLight }}>Opret materialer, timer og ydelser der kan bruges i pakker og tilbud</p>
+          <button onClick={() => setShowModal(true)} style={{ ...STYLES.primaryBtn, marginTop: 16 }}>+ Opret produkt</button>
+        </div>
+      ) : filteredProdukter.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48, color: COLORS.textLight }}>Ingen produkter matcher</div>
+      ) : (
+        <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr style={{ background: COLORS.bg }}>
+              <th style={STYLES.th}>Varenr</th>
+              <th style={STYLES.th}>Navn</th>
+              <th style={STYLES.th}>Type</th>
+              <th style={STYLES.th}>Enhed</th>
+              <th style={{ ...STYLES.th, textAlign: 'right' }}>Kost</th>
+              <th style={{ ...STYLES.th, textAlign: 'right' }}>Salg</th>
+              <th style={STYLES.th}>Kategori</th>
+              <th style={STYLES.th}>Status</th>
+              <th style={STYLES.th}></th>
+            </tr></thead>
+            <tbody>
+              {filteredProdukter.map(p => (
+                <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                  <td style={STYLES.td}><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{p.sku || '–'}</span></td>
+                  <td style={{ ...STYLES.td, fontWeight: 500 }}>{p.title}</td>
+                  <td style={STYLES.td}>
+                    <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: `${typeColors[p.type]}20`, color: typeColors[p.type] }}>
+                      {typeLabels[p.type]}
+                    </span>
+                  </td>
+                  <td style={STYLES.td}>{p.unit}</td>
+                  <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(p.cost_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
+                  <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>{Number(p.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
+                  <td style={STYLES.td}>{p.category || '–'}</td>
+                  <td style={STYLES.td}>
+                    <span style={{ padding: '4px 8px', borderRadius: 4, fontSize: 12, background: p.active ? '#D1FAE5' : '#FEE2E2', color: p.active ? '#059669' : '#DC2626' }}>
+                      {p.active ? 'Aktiv' : 'Inaktiv'}
+                    </span>
+                  </td>
+                  <td style={STYLES.td}>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button onClick={() => toggleAktiv(p)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>
+                        {p.active ? 'Deaktiver' : 'Aktiver'}
+                      </button>
+                      <button onClick={() => { setEditingProdukt(p); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>Ret</button>
+                      <button onClick={() => deleteProdukt(p)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>Slet</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showModal && (
+        <Modal title={editingProdukt ? 'Rediger produkt' : 'Nyt produkt'} onClose={() => { setShowModal(false); setEditingProdukt(null); }}>
+          <ProduktForm initial={editingProdukt} kategorier={kategorier} onSave={saveProdukt} onCancel={() => { setShowModal(false); setEditingProdukt(null); }} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ProduktForm({ initial, kategorier, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id: initial?.id || null,
+    sku: initial?.sku || '',
+    title: initial?.title || '',
+    type: initial?.type || 'materiale',
+    unit: initial?.unit || 'stk',
+    cost_price: initial?.cost_price || '',
+    sale_price: initial?.sale_price || '',
+    category: initial?.category || '',
+    active: initial?.active !== false
+  });
+
+  const handleSubmit = () => {
+    if (!form.title.trim()) { alert('Navn er påkrævet'); return; }
+    onSave(form);
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Varenr</label>
+          <input value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} style={STYLES.input} placeholder="F.eks. SOL-400W" />
+        </div>
+        <div>
+          <label style={STYLES.label}>Navn *</label>
+          <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={STYLES.input} placeholder="F.eks. Solpanel 400W" />
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Type</label>
+          <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} style={STYLES.select}>
+            <option value="materiale">🔩 Materiale</option>
+            <option value="timer">⏱️ Timer</option>
+            <option value="ydelse">📋 Ydelse</option>
+          </select>
+        </div>
+        <div>
+          <label style={STYLES.label}>Enhed</label>
+          <input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} style={STYLES.input} placeholder="stk, m, time, etc." />
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Kostpris (kr.)</label>
+          <input type="number" value={form.cost_price} onChange={e => setForm({ ...form, cost_price: e.target.value })} style={STYLES.input} min="0" step="0.01" placeholder="0.00" />
+        </div>
+        <div>
+          <label style={STYLES.label}>Salgspris (kr.)</label>
+          <input type="number" value={form.sale_price} onChange={e => setForm({ ...form, sale_price: e.target.value })} style={STYLES.input} min="0" step="0.01" placeholder="0.00" />
+        </div>
+      </div>
+      <div>
+        <label style={STYLES.label}>Kategori</label>
+        <input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} style={STYLES.input} placeholder="F.eks. Solpaneler, Inverter, Montage" list="kategorier" />
+        <datalist id="kategorier">
+          {kategorier.map(k => <option key={k} value={k} />)}
+        </datalist>
+      </div>
+      <div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} />
+          <span style={{ fontWeight: 500 }}>Produkt er aktivt</span>
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem' : 'Opret'}</button>
+      </div>
+    </div>
+  );
+}
+
+// Produkt-vælger modal komponent (bruges i pakker og tilbud)
+function ProduktVaelger({ onSelect, onCancel }) {
+  const [produkter, setProdukter] = useState([]);
+  const [search, setSearch] = useState('');
+  const [filterType, setFilterType] = useState('alle');
+
+  useEffect(() => { loadProdukter(); }, []);
+
+  const loadProdukter = async () => {
+    const { data } = await supabase.from('products').select('*').eq('active', true).order('title');
+    setProdukter(data || []);
+  };
+
+  let filtered = produkter;
+  if (filterType !== 'alle') {
+    filtered = filtered.filter(p => p.type === filterType);
+  }
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filtered = filtered.filter(p => 
+      (p.sku || '').toLowerCase().includes(s) || 
+      (p.title || '').toLowerCase().includes(s) ||
+      (p.category || '').toLowerCase().includes(s)
+    );
+  }
+
+  const typeLabels = { materiale: '🔩', timer: '⏱️', ydelse: '📋' };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <input type="text" placeholder="🔍 Søg..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...STYLES.input, flex: 1 }} />
+        <select value={filterType} onChange={e => setFilterType(e.target.value)} style={STYLES.select}>
+          <option value="alle">Alle</option>
+          <option value="materiale">Materiale</option>
+          <option value="timer">Timer</option>
+          <option value="ydelse">Ydelse</option>
+        </select>
+      </div>
+      {filtered.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>Ingen produkter fundet</div>
+      ) : (
+        <div style={{ maxHeight: 400, overflow: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr style={{ background: COLORS.bg }}>
+              <th style={STYLES.th}>Produkt</th>
+              <th style={{ ...STYLES.th, textAlign: 'right' }}>Salg</th>
+              <th style={STYLES.th}></th>
+            </tr></thead>
+            <tbody>
+              {filtered.map(p => (
+                <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                  <td style={STYLES.td}>
+                    <div style={{ fontWeight: 500 }}>{typeLabels[p.type]} {p.title}</div>
+                    <div style={{ fontSize: 12, color: COLORS.textLight }}>{p.sku || ''} {p.category && `• ${p.category}`}</div>
+                  </td>
+                  <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>{Number(p.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</td>
+                  <td style={STYLES.td}>
+                    <button onClick={() => onSelect(p)} style={{ ...STYLES.primaryBtn, padding: '4px 12px', fontSize: 12 }}>Vælg</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
       </div>
     </div>
   );
