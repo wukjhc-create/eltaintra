@@ -721,8 +721,8 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const [sortBy, setSortBy] = useState('created_at');
   const [sortDir, setSortDir] = useState('desc');
 
-  // Rettigheder: kun admin og sælger må uploade/slette
-  const canManageFiles = profile?.role === 'admin' || profile?.role === 'saelger';
+  // Rettigheder: admin, sælger og serviceleder må uploade/slette
+  const canManageFiles = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
 
   useEffect(() => { loadData(); }, []);
 
@@ -1333,7 +1333,6 @@ function IndstillingerSystem() {
     const { error } = await supabase.from('profiles').update({
       name: form.name,
       role: form.role,
-      permissions: form.permissions,
       phone: form.phone,
       title: form.title,
       active: form.active
@@ -1352,14 +1351,14 @@ function IndstillingerSystem() {
     });
     if (error) { alert('Fejl: ' + error.message); return; }
     setTimeout(async () => {
-      await supabase.from('profiles').update({ name: form.name, role: form.role, permissions: form.permissions, phone: form.phone, title: form.title, active: true }).eq('email', form.email);
+      await supabase.from('profiles').update({ name: form.name, role: form.role, phone: form.phone, title: form.title, active: true }).eq('email', form.email);
       loadBrugere();
     }, 1000);
     setShowModal(false);
     alert(`Bruger oprettet!\n\nEmail: ${form.email}\nAdgangskode: ${form.password}`);
   };
 
-  const roleLabels = { admin: '👑 Administrator', saelger: '💼 Sælger', montoer: '🔧 Montør', elev: '📚 Elev' };
+  const roleLabels = { admin: '👑 Administrator', saelger: '💼 Sælger', serviceleder: '🔧 Serviceleder', montoer: '👷 Montør', elev: '📚 Elev' };
 
   // Filtrering
   let filteredBrugere = brugere.filter(b => {
@@ -1422,14 +1421,15 @@ function IndstillingerSystem() {
             </div>
           </div>
 
-          {selectedBruger.permissions && selectedBruger.permissions.length > 0 && (
-            <div style={{ marginTop: 24, padding: 16, background: COLORS.bg, borderRadius: 8 }}>
-              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 8 }}>RETTIGHEDER</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {selectedBruger.permissions.map(p => (
-                  <span key={p} style={{ padding: '4px 8px', background: '#DBEAFE', color: '#1D4ED8', borderRadius: 4, fontSize: 12 }}>{p}</span>
-                ))}
-              </div>
+          {/* Rolle-baseret adgangsinfo */}
+          {(selectedBruger.role === 'admin' || selectedBruger.role === 'saelger' || selectedBruger.role === 'serviceleder') && (
+            <div style={{ marginTop: 24, padding: 12, background: '#DBEAFE', borderRadius: 8, fontSize: 14, color: '#1D4ED8' }}>
+              ✓ Fuld adgang til kunder, projekter og dokumenter
+            </div>
+          )}
+          {(selectedBruger.role === 'montoer' || selectedBruger.role === 'elev') && (
+            <div style={{ marginTop: 24, padding: 12, background: COLORS.bg, borderRadius: 8, fontSize: 14, color: COLORS.textLight }}>
+              👁 Kun læseadgang
             </div>
           )}
         </div>
@@ -1519,6 +1519,7 @@ function IndstillingerSystem() {
               <option value="alle">Alle roller</option>
               <option value="admin">Administrator</option>
               <option value="saelger">Sælger</option>
+              <option value="serviceleder">Serviceleder</option>
               <option value="montoer">Montør</option>
               <option value="elev">Elev</option>
             </select>
@@ -1586,7 +1587,6 @@ function BrugerForm({ initial, currentUserId, onSave, onCancel, isEdit }) {
     email: initial?.email || '',
     name: initial?.name || '',
     role: initial?.role || 'saelger',
-    permissions: initial?.permissions || [],
     phone: initial?.phone || '',
     title: initial?.title || '',
     active: initial?.active !== false,
@@ -1596,23 +1596,6 @@ function BrugerForm({ initial, currentUserId, onSave, onCancel, isEdit }) {
   // Self-edit check: admin kan ikke ændre sin egen rolle eller deaktivere sig selv
   const isEditingSelf = isEdit && initial?.id === currentUserId;
   const isSelfAdmin = isEditingSelf && initial?.role === 'admin';
-
-  const allPermissions = [
-    { id: 'kunder_se', label: 'Se kunder' },
-    { id: 'kunder_opret', label: 'Oprette kunder' },
-    { id: 'kunder_rediger', label: 'Redigere kunder' },
-    { id: 'projekter_se', label: 'Se projekter' },
-    { id: 'projekter_opret', label: 'Oprette projekter' },
-    { id: 'projekter_rediger', label: 'Redigere projekter' },
-  ];
-
-  const togglePermission = (permId) => {
-    if (form.permissions.includes(permId)) {
-      setForm({ ...form, permissions: form.permissions.filter(p => p !== permId) });
-    } else {
-      setForm({ ...form, permissions: [...form.permissions, permId] });
-    }
-  };
 
   const generatePassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -1667,28 +1650,21 @@ function BrugerForm({ initial, currentUserId, onSave, onCancel, isEdit }) {
           style={{ ...STYLES.select, background: isSelfAdmin ? '#F3F4F6' : 'white', cursor: isSelfAdmin ? 'not-allowed' : 'pointer' }}
           disabled={isSelfAdmin}
         >
+          <option value="admin">Administrator</option>
           <option value="saelger">Sælger</option>
+          <option value="serviceleder">Serviceleder</option>
           <option value="montoer">Montør</option>
           <option value="elev">Elev</option>
-          <option value="admin">Administrator</option>
         </select>
       </div>
-      {form.role !== 'admin' && (
-        <div style={{ background: COLORS.bg, padding: 16, borderRadius: 8 }}>
-          <label style={{ ...STYLES.label, marginBottom: 12 }}>Rettigheder</label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {allPermissions.map(perm => (
-              <label key={perm.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-                <input type="checkbox" checked={form.permissions.includes(perm.id)} onChange={() => togglePermission(perm.id)} />
-                {perm.label}
-              </label>
-            ))}
-          </div>
+      {(form.role === 'admin' || form.role === 'saelger' || form.role === 'serviceleder') && (
+        <div style={{ background: '#DBEAFE', padding: 12, borderRadius: 8, fontSize: 14, color: '#1D4ED8' }}>
+          {form.role === 'admin' ? 'Administratorer' : form.role === 'saelger' ? 'Sælgere' : 'Serviceledere'} har fuld adgang til kunder, projekter og dokumenter.
         </div>
       )}
-      {form.role === 'admin' && (
-        <div style={{ background: '#DBEAFE', padding: 12, borderRadius: 8, fontSize: 14, color: '#1D4ED8' }}>
-          Administratorer har automatisk fuld adgang.
+      {(form.role === 'montoer' || form.role === 'elev') && (
+        <div style={{ background: COLORS.bg, padding: 12, borderRadius: 8, fontSize: 14, color: COLORS.textLight }}>
+          {form.role === 'montoer' ? 'Montører' : 'Elever'} har kun læseadgang.
         </div>
       )}
       {isEdit && (
