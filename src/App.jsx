@@ -171,29 +171,18 @@ function SolarLogo({ size = 40 }) {
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function LoginPage() {
-  const { login, signUp } = useAuth();
-  const [mode, setMode] = useState('login');
+  const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setMessage('');
     setLoading(true);
-
-    if (mode === 'login') {
-      const result = await login(email, password);
-      if (!result.success) setError(result.error);
-    } else {
-      const result = await signUp(email, password, name);
-      if (!result.success) setError(result.error);
-      else setMessage(result.message);
-    }
+    const result = await login(email, password);
+    if (!result.success) setError(result.error);
     setLoading(false);
   };
 
@@ -218,26 +207,9 @@ function LoginPage() {
           <p style={{ color: COLORS.textLight, fontSize: 14 }}>{CONFIG.tagline}</p>
         </div>
 
-        <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-          {['login', 'signup'].map(m => (
-            <button key={m} onClick={() => setMode(m)} style={{
-              flex: 1, padding: '10px', border: 'none', borderRadius: 10,
-              background: mode === m ? COLORS.primary : COLORS.bg,
-              color: mode === m ? 'white' : COLORS.text,
-              fontWeight: 600, cursor: 'pointer'
-            }}>
-              {m === 'login' ? 'Log ind' : 'Opret konto'}
-            </button>
-          ))}
-        </div>
+        <h2 style={{ textAlign: 'center', marginBottom: 24, fontSize: 20, fontWeight: 600 }}>Log ind</h2>
 
         <form onSubmit={handleSubmit}>
-          {mode === 'signup' && (
-            <div style={{ marginBottom: 16 }}>
-              <label style={labelStyle}>Navn</label>
-              <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Dit navn" required style={inputStyle} />
-            </div>
-          )}
           <div style={{ marginBottom: 16 }}>
             <label style={labelStyle}>Email</label>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="din@email.dk" required style={inputStyle} />
@@ -248,12 +220,15 @@ function LoginPage() {
           </div>
 
           {error && <div style={{ padding: '12px 16px', background: '#FEE2E2', borderRadius: 12, color: COLORS.error, fontSize: 14, marginBottom: 16 }}>{error}</div>}
-          {message && <div style={{ padding: '12px 16px', background: '#D1FAE5', borderRadius: 12, color: COLORS.success, fontSize: 14, marginBottom: 16 }}>{message}</div>}
 
           <button type="submit" disabled={loading} style={{ ...primaryButtonStyle, width: '100%', padding: '16px', fontSize: 16, opacity: loading ? 0.7 : 1 }}>
-            {loading ? 'Vent...' : (mode === 'login' ? 'Log ind' : 'Opret konto')}
+            {loading ? 'Logger ind...' : 'Log ind'}
           </button>
         </form>
+
+        <p style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: COLORS.textLight }}>
+          Kontakt administrator for at få adgang
+        </p>
       </div>
     </div>
   );
@@ -613,50 +588,156 @@ function TilbudModal({ onClose }) {
 
 function BrugerSystem() {
   const [brugere, setBrugere] = useState([]);
-  const { signUp } = useAuth();
   const [showCreate, setShowCreate] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(null);
 
   useEffect(() => { loadBrugere(); }, []);
   const loadBrugere = async () => { const { data } = await supabase.from('profiles').select('*').order('name'); setBrugere(data || []); };
+
+  const generatePassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let pass = '';
+    for (let i = 0; i < 12; i++) pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    return pass;
+  };
+
+  const createBruger = async (form) => {
+    const tempPassword = generatePassword();
+    
+    // Create user in Supabase Auth
+    const { data, error } = await supabase.auth.admin.createUser({
+      email: form.email,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: { name: form.name, role: form.role }
+    });
+
+    if (error) {
+      // Fallback: use signUp if admin API not available
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: form.email,
+        password: tempPassword,
+        options: { data: { name: form.name, role: form.role } }
+      });
+      
+      if (signUpError) {
+        alert('Fejl: ' + signUpError.message);
+        return;
+      }
+    }
+
+    setShowCreate(false);
+    setShowSuccess({ email: form.email, password: tempPassword, name: form.name });
+    loadBrugere();
+  };
 
   const rolleColors = { admin: '#DBEAFE', saelger: '#D1FAE5', montoer: '#FEF3C7', elev: '#F3E8FF' };
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Brugerstyring</h1>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Brugerstyring</h1>
+          <p style={{ color: COLORS.textLight, margin: '4px 0 0', fontSize: 14 }}>Administrer systemets brugere</p>
+        </div>
         <button onClick={() => setShowCreate(true)} style={primaryButtonStyle}>+ Opret bruger</button>
       </div>
+
       <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${COLORS.border}`, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr style={{ background: COLORS.bg }}><th style={thStyle}>Bruger</th><th style={thStyle}>Rolle</th><th style={thStyle}>Rettigheder</th></tr></thead>
+          <thead><tr style={{ background: COLORS.bg }}><th style={thStyle}>Bruger</th><th style={thStyle}>Rolle</th><th style={thStyle}>Rettigheder</th><th style={thStyle}>Status</th></tr></thead>
           <tbody>
             {brugere.map(b => (
               <tr key={b.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
                 <td style={tdStyle}><div style={{ fontWeight: 600 }}>{b.name}</div><div style={{ fontSize: 12, color: COLORS.textLight }}>{b.email}</div></td>
                 <td style={tdStyle}><span style={{ padding: '4px 12px', background: rolleColors[b.role], borderRadius: 20, fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>{b.role}</span></td>
                 <td style={tdStyle}>{b.permissions?.map(p => <span key={p} style={{ marginRight: 4, padding: '2px 8px', background: COLORS.bg, borderRadius: 6, fontSize: 11 }}>{p}</span>)}</td>
+                <td style={tdStyle}><span style={{ color: COLORS.success, fontSize: 12 }}>● Aktiv</span></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {showCreate && <Modal title="Opret bruger" onClose={() => setShowCreate(false)}>
-        <BrugerForm onSave={async (form) => { await signUp(form.email, form.password, form.name, form.role); setShowCreate(false); loadBrugere(); }} onCancel={() => setShowCreate(false)} />
+
+      {showCreate && <Modal title="Opret ny bruger" onClose={() => setShowCreate(false)}>
+        <AdminBrugerForm onSave={createBruger} onCancel={() => setShowCreate(false)} />
+      </Modal>}
+
+      {showSuccess && <Modal title="✅ Bruger oprettet" onClose={() => setShowSuccess(null)}>
+        <div style={{ background: '#D1FAE5', borderRadius: 12, padding: 20, marginBottom: 20 }}>
+          <p style={{ margin: 0, fontWeight: 600, color: COLORS.success }}>Brugeren er oprettet!</p>
+        </div>
+        <div style={{ background: COLORS.bg, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+          <p style={{ margin: '0 0 12px', fontSize: 14 }}><strong>Navn:</strong> {showSuccess.name}</p>
+          <p style={{ margin: '0 0 12px', fontSize: 14 }}><strong>Email:</strong> {showSuccess.email}</p>
+          <p style={{ margin: '0 0 12px', fontSize: 14 }}><strong>Midlertidig adgangskode:</strong></p>
+          <code style={{ display: 'block', background: 'white', padding: 12, borderRadius: 8, fontSize: 16, fontWeight: 600, letterSpacing: 1 }}>{showSuccess.password}</code>
+        </div>
+        <div style={{ background: '#FEF3C7', borderRadius: 12, padding: 16, marginBottom: 20 }}>
+          <p style={{ margin: 0, fontSize: 13, color: '#92400E' }}>
+            ⚠️ <strong>Vigtigt:</strong> Send disse oplysninger til brugeren. Adgangskoden vises kun denne ene gang.
+          </p>
+        </div>
+        <div style={{ background: 'white', border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16 }}>
+          <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600 }}>Kopier denne besked til brugeren:</p>
+          <textarea readOnly style={{ width: '100%', height: 120, padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, resize: 'none' }} value={`Hej ${showSuccess.name},
+
+Din bruger til Elta Solar platformen er nu oprettet.
+
+Log ind på: https://app.eltasolar.dk
+
+Email: ${showSuccess.email}
+Adgangskode: ${showSuccess.password}
+
+Du bedes ændre din adgangskode efter første login.
+
+Med venlig hilsen
+Elta Solar`} />
+        </div>
+        <div style={{ marginTop: 20 }}>
+          <button onClick={() => setShowSuccess(null)} style={primaryButtonStyle}>Luk</button>
+        </div>
       </Modal>}
     </div>
   );
 }
 
-function BrugerForm({ onSave, onCancel }) {
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'saelger' });
+function AdminBrugerForm({ onSave, onCancel }) {
+  const [form, setForm] = useState({ name: '', email: '', role: 'saelger' });
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!form.name || !form.email) {
+      alert('Udfyld venligst navn og email');
+      return;
+    }
+    setSaving(true);
+    await onSave(form);
+    setSaving(false);
+  };
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <FormField label="Navn" value={form.name} onChange={v => setForm({ ...form, name: v })} />
-      <FormField label="Email" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} />
-      <FormField label="Adgangskode" type="password" value={form.password} onChange={v => setForm({ ...form, password: v })} />
-      <div><label style={labelStyle}>Rolle</label><select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={selectStyle}><option value="admin">Admin</option><option value="saelger">Sælger</option><option value="montoer">Montør</option><option value="elev">Elev</option></select></div>
-      <div style={{ display: 'flex', gap: 12 }}><button onClick={onCancel} style={secondaryButtonStyle}>Annuller</button><button onClick={() => onSave(form)} style={primaryButtonStyle}>Opret</button></div>
+      <p style={{ margin: 0, fontSize: 14, color: COLORS.textLight }}>
+        Brugeren modtager en midlertidig adgangskode som vises efter oprettelse.
+      </p>
+      <FormField label="Fulde navn *" value={form.name} onChange={v => setForm({ ...form, name: v })} />
+      <FormField label="Email *" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} />
+      <div>
+        <label style={labelStyle}>Rolle *</label>
+        <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={selectStyle}>
+          <option value="saelger">Sælger</option>
+          <option value="montoer">Montør</option>
+          <option value="elev">Elev</option>
+          <option value="admin">Administrator</option>
+        </select>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={secondaryButtonStyle}>Annuller</button>
+        <button onClick={handleSave} disabled={saving} style={{ ...primaryButtonStyle, opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Opretter...' : 'Opret bruger'}
+        </button>
+      </div>
     </div>
   );
 }
