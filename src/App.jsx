@@ -357,7 +357,12 @@ function ProjektSystem() {
   };
 
   const createProjekt = async (form) => {
-    const { data, error } = await supabase.from('projects').insert([form]).select().single();
+    // Convert empty strings to null for UUID fields
+    const cleanForm = {
+      ...form,
+      customer_id: form.customer_id || null
+    };
+    const { data, error } = await supabase.from('projects').insert([cleanForm]).select().single();
     if (error) { alert('Fejl: ' + error.message); return; }
     setShowCreate(false);
     setSelectedProjekt(data);
@@ -1374,14 +1379,14 @@ function TilbudForm({ onSave, onCancel }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div>
           <label style={STYLES.label}>Kunde</label>
-          <select style={STYLES.select} value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
+          <select style={STYLES.select} value={form.customer_id || ''} onChange={e => setForm({ ...form, customer_id: e.target.value || null })}>
             <option value="">Vælg kunde</option>
             {kunder.map(k => <option key={k.id} value={k.id}>{k.company || k.name}</option>)}
           </select>
         </div>
         <div>
           <label style={STYLES.label}>Projekt (valgfri)</label>
-          <select style={STYLES.select} value={form.project_id} onChange={e => setForm({ ...form, project_id: e.target.value })}>
+          <select style={STYLES.select} value={form.project_id || ''} onChange={e => setForm({ ...form, project_id: e.target.value || null })}>
             <option value="">Vælg projekt</option>
             {projekter.filter(p => !form.customer_id || p.customer_id === form.customer_id).map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
