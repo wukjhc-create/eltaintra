@@ -97,6 +97,7 @@ export default function App() {
               {section === 'dashboard' && <Dashboard setSection={setSection} />}
               {section === 'kunder' && <KunderSystem onNavigateToProjekt={navigateToProjekt} />}
               {section === 'projekter' && <ProjekterSystem initialProjektId={selectedProjektId} onProjektOpened={() => setSelectedProjektId(null)} />}
+              {section === 'ordrer' && <OrdreSystem />}
               {section === 'pakker' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <PakkerSystem />}
               {section === 'katalog' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <VarekatalogSystem />}
               {section === 'indstillinger' && profile?.role === 'admin' && <IndstillingerSystem />}
@@ -156,6 +157,7 @@ function Navigation({ section, setSection }) {
     { id: 'dashboard', label: 'Overblik', icon: '📊' },
     { id: 'kunder', label: 'Kunder', icon: '👥' },
     { id: 'projekter', label: 'Projekter', icon: '🔧' },
+    { id: 'ordrer', label: 'Ordrer', icon: '🏗️' },
     { id: 'pakker', label: 'Pakker', icon: '📦', managerOnly: true },
     { id: 'katalog', label: 'Varekatalog', icon: '🏷️', managerOnly: true },
     { id: 'indstillinger', label: 'Indstillinger', icon: '⚙️', adminOnly: true },
@@ -1096,8 +1098,9 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
       return;
     }
     
-    if (!confirm(`Marker "${t.title}" som accepteret af kunden?`)) return;
+    if (!confirm(`Marker "${t.title}" som accepteret af kunden?\n\nDer oprettes automatisk en ordre.`)) return;
     
+    // Opdater tilbud status
     const { error } = await supabase.from('quotes').update({
       status: 'accepteret',
       is_locked: true,
@@ -1107,9 +1110,50 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     }).eq('id', t.id);
     
     if (error) { alert('Fejl: ' + error.message); return; }
+    
+    // Hent tilbudslinjer for at beregne totaler
+    const { data: linjer } = await supabase.from('quote_lines').select('*').eq('quote_id', t.id);
+    const totalCost = (linjer || []).reduce((sum, l) => sum + (l.quantity * l.cost_price), 0);
+    const totalSale = (linjer || []).reduce((sum, l) => sum + (l.quantity * l.sale_price), 0);
+    
+    // Opret ordre
+    const { data: newOrder, error: orderError } = await supabase.from('orders').insert([{
+      quote_id: t.id,
+      project_id: t.project_id,
+      customer_id: selectedProjekt.customer_id,
+      title: t.title,
+      description: t.description,
+      total_cost: totalCost,
+      total_sale: totalSale,
+      status: 'oprettet',
+      created_by: user?.id
+    }]).select();
+    
+    if (orderError) { 
+      console.error('Ordre fejl:', orderError);
+      alert('Tilbud accepteret, men der opstod fejl ved oprettelse af ordre: ' + orderError.message); 
+    } else if (newOrder && newOrder[0] && linjer && linjer.length > 0) {
+      // Kopiér linjer til ordre
+      const orderLines = linjer.map(l => ({
+        order_id: newOrder[0].id,
+        product_id: l.product_id,
+        type: l.type,
+        title: l.title,
+        quantity: l.quantity,
+        cost_price: l.cost_price,
+        sale_price: l.sale_price,
+        sort_order: l.sort_order
+      }));
+      await supabase.from('order_lines').insert(orderLines);
+    }
+    
     loadTilbud(selectedProjekt.id);
     if (selectedTilbud?.id === t.id) {
       setSelectedTilbud({ ...selectedTilbud, status: 'accepteret', is_locked: true });
+    }
+    
+    if (!orderError) {
+      alert(`✅ Tilbud accepteret!\n\nOrdre #${newOrder[0].order_number} er oprettet.\n\nGå til "🏗️ Ordrer" for at se ordren.`);
     }
   };
 
@@ -2365,6 +2409,392 @@ function PakkeVaelger({ onSelect, onCancel }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// ORDRE SYSTEM (Ordrer / Vundne sager)
+// Status: oprettet → planlagt → igang → afsluttet → faktureret
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function OrdreSystem() {
+  const { user, profile } = useAuth();
+  const [ordrer, setOrdrer] = useState([]);
+  const [selectedOrdre, setSelectedOrdre] = useState(null);
+  const [ordreLinjer, setOrdreLinjer] = useState([]);
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('alle');
+  const [marginSettings, setMarginSettings] = useState(null);
+
+  // Rettigheder
+  const isAdmin = profile?.role === 'admin';
+  const canEditOrdre = profile?.role === 'admin' || profile?.role === 'serviceleder';
+  const canChangeStatus = profile?.role === 'admin' || profile?.role === 'serviceleder' || profile?.role === 'montoer';
+  const canViewEconomy = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+
+  useEffect(() => { loadOrdrer(); loadMarginSettings(); }, []);
+
+  const loadOrdrer = async () => {
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        projects(id, name, address, city),
+        customers(id, name, company),
+        quotes(id, title, version)
+      `)
+      .order('created_at', { ascending: false });
+    if (error) { console.error('Fejl:', error); return; }
+    setOrdrer(data || []);
+  };
+
+  const loadMarginSettings = async () => {
+    const { data } = await supabase.from('margin_settings').select('*').limit(1).single();
+    if (data) setMarginSettings(data);
+  };
+
+  const loadOrdreLinjer = async (ordreId) => {
+    const { data, error } = await supabase
+      .from('order_lines')
+      .select('*')
+      .eq('order_id', ordreId)
+      .order('sort_order');
+    if (error) { console.error('Fejl:', error); return; }
+    setOrdreLinjer(data || []);
+  };
+
+  useEffect(() => {
+    if (selectedOrdre) loadOrdreLinjer(selectedOrdre.id);
+  }, [selectedOrdre?.id]);
+
+  const updateOrdreStatus = async (ordre, newStatus) => {
+    const statusFlow = ['oprettet', 'planlagt', 'igang', 'afsluttet', 'faktureret'];
+    const currentIdx = statusFlow.indexOf(ordre.status);
+    const newIdx = statusFlow.indexOf(newStatus);
+    
+    // Montør kan kun gå til igang eller afsluttet
+    if (profile?.role === 'montoer') {
+      if (newStatus !== 'igang' && newStatus !== 'afsluttet') {
+        alert('Du kan kun markere ordrer som "I gang" eller "Afsluttet"');
+        return;
+      }
+    }
+    
+    const updates = { 
+      status: newStatus, 
+      updated_at: new Date().toISOString() 
+    };
+    
+    // Sæt timestamps baseret på status
+    if (newStatus === 'igang' && !ordre.actual_start) {
+      updates.actual_start = new Date().toISOString().split('T')[0];
+    }
+    if (newStatus === 'afsluttet' && !ordre.actual_end) {
+      updates.actual_end = new Date().toISOString().split('T')[0];
+    }
+    
+    const { error } = await supabase.from('orders').update(updates).eq('id', ordre.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    
+    loadOrdrer();
+    if (selectedOrdre?.id === ordre.id) {
+      setSelectedOrdre({ ...selectedOrdre, ...updates });
+    }
+  };
+
+  const updateOrdreDatoer = async (ordre, field, value) => {
+    const { error } = await supabase.from('orders').update({ 
+      [field]: value,
+      updated_at: new Date().toISOString()
+    }).eq('id', ordre.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadOrdrer();
+    if (selectedOrdre?.id === ordre.id) {
+      setSelectedOrdre({ ...selectedOrdre, [field]: value });
+    }
+  };
+
+  const updateOrdreAssigned = async (ordre, userId) => {
+    const { error } = await supabase.from('orders').update({ 
+      assigned_to: userId || null,
+      updated_at: new Date().toISOString()
+    }).eq('id', ordre.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadOrdrer();
+  };
+
+  // Beregninger
+  const calcTotals = (linjer) => {
+    const totalKost = linjer.reduce((sum, l) => sum + (l.quantity * l.cost_price), 0);
+    const totalSalg = linjer.reduce((sum, l) => sum + (l.quantity * l.sale_price), 0);
+    const dbKr = totalSalg - totalKost;
+    const dbPct = totalSalg > 0 ? (dbKr / totalSalg) * 100 : 0;
+    return { totalKost, totalSalg, dbKr, dbPct };
+  };
+
+  const getMarginColor = (dbPct) => {
+    const minMargin = marginSettings?.min_margin_global || 25;
+    const warning = marginSettings?.warning_threshold || 5;
+    if (dbPct < minMargin) return { bg: '#FEE2E2', color: '#DC2626' };
+    if (dbPct < minMargin + warning) return { bg: '#FEF3C7', color: '#D97706' };
+    return { bg: '#D1FAE5', color: '#059669' };
+  };
+
+  const statusColors = {
+    oprettet: { bg: '#F3F4F6', color: '#6B7280' },
+    planlagt: { bg: '#DBEAFE', color: '#1D4ED8' },
+    igang: { bg: '#FEF3C7', color: '#D97706' },
+    afsluttet: { bg: '#D1FAE5', color: '#059669' },
+    faktureret: { bg: '#E0E7FF', color: '#4F46E5' }
+  };
+
+  const statusLabels = {
+    oprettet: 'Oprettet',
+    planlagt: 'Planlagt',
+    igang: 'I gang',
+    afsluttet: 'Afsluttet',
+    faktureret: 'Faktureret'
+  };
+
+  const typeLabels = { materiale: '🔩 Materiale', timer: '⏱️ Timer', ydelse: '📋 Ydelse' };
+  const typeColors = { materiale: '#3B82F6', timer: '#F59E0B', ydelse: '#8B5CF6' };
+
+  // Filtrering
+  let filteredOrdrer = ordrer.filter(o => {
+    if (filterStatus !== 'alle' && o.status !== filterStatus) return false;
+    return true;
+  });
+
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filteredOrdrer = filteredOrdrer.filter(o =>
+      (o.title || '').toLowerCase().includes(s) ||
+      (o.order_number?.toString() || '').includes(s) ||
+      (o.customers?.name || '').toLowerCase().includes(s) ||
+      (o.customers?.company || '').toLowerCase().includes(s) ||
+      (o.projects?.name || '').toLowerCase().includes(s)
+    );
+  }
+
+  // Ordre-detaljevisning
+  if (selectedOrdre) {
+    const totals = calcTotals(ordreLinjer);
+    const marginColor = getMarginColor(totals.dbPct);
+    
+    return (
+      <div>
+        <button onClick={() => setSelectedOrdre(null)} style={{ ...STYLES.secondaryBtn, marginBottom: 24 }}>← Tilbage til ordrer</button>
+        
+        <div style={{ ...STYLES.card, marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Ordre #{selectedOrdre.order_number}</h1>
+                <span style={{ 
+                  padding: '4px 12px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+                  background: statusColors[selectedOrdre.status]?.bg,
+                  color: statusColors[selectedOrdre.status]?.color
+                }}>{statusLabels[selectedOrdre.status]}</span>
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 500, marginTop: 8 }}>{selectedOrdre.title}</div>
+              <div style={{ marginTop: 8, fontSize: 14, color: COLORS.textLight }}>
+                {selectedOrdre.customers && `👤 ${selectedOrdre.customers.company || selectedOrdre.customers.name}`}
+                {selectedOrdre.projects && ` • 🔧 ${selectedOrdre.projects.name}`}
+                {selectedOrdre.quotes && ` • 📄 Tilbud v${selectedOrdre.quotes.version}`}
+              </div>
+            </div>
+            {canChangeStatus && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                {selectedOrdre.status === 'oprettet' && (
+                  <button onClick={() => updateOrdreStatus(selectedOrdre, 'planlagt')} style={{ ...STYLES.primaryBtn, background: '#1D4ED8' }}>📅 Planlæg</button>
+                )}
+                {selectedOrdre.status === 'planlagt' && (
+                  <button onClick={() => updateOrdreStatus(selectedOrdre, 'igang')} style={{ ...STYLES.primaryBtn, background: '#D97706' }}>▶️ Start</button>
+                )}
+                {selectedOrdre.status === 'igang' && (
+                  <button onClick={() => updateOrdreStatus(selectedOrdre, 'afsluttet')} style={{ ...STYLES.primaryBtn, background: '#059669' }}>✅ Afslut</button>
+                )}
+                {selectedOrdre.status === 'afsluttet' && isAdmin && (
+                  <button onClick={() => updateOrdreStatus(selectedOrdre, 'faktureret')} style={{ ...STYLES.primaryBtn, background: '#4F46E5' }}>💰 Faktureret</button>
+                )}
+              </div>
+            )}
+          </div>
+          {selectedOrdre.description && (
+            <p style={{ color: COLORS.textLight, marginTop: 16, whiteSpace: 'pre-wrap' }}>{selectedOrdre.description}</p>
+          )}
+        </div>
+
+        {/* Datoer - kun for admin/serviceleder */}
+        {canEditOrdre && (
+          <div style={{ ...STYLES.card, marginBottom: 24 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 0, marginBottom: 16 }}>📅 Planlægning</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+              <div>
+                <label style={STYLES.label}>Planlagt start</label>
+                <input type="date" value={selectedOrdre.planned_start || ''} onChange={e => updateOrdreDatoer(selectedOrdre, 'planned_start', e.target.value)} style={STYLES.input} />
+              </div>
+              <div>
+                <label style={STYLES.label}>Planlagt slut</label>
+                <input type="date" value={selectedOrdre.planned_end || ''} onChange={e => updateOrdreDatoer(selectedOrdre, 'planned_end', e.target.value)} style={STYLES.input} />
+              </div>
+              <div>
+                <label style={STYLES.label}>Faktisk start</label>
+                <input type="date" value={selectedOrdre.actual_start || ''} onChange={e => updateOrdreDatoer(selectedOrdre, 'actual_start', e.target.value)} style={STYLES.input} />
+              </div>
+              <div>
+                <label style={STYLES.label}>Faktisk slut</label>
+                <input type="date" value={selectedOrdre.actual_end || ''} onChange={e => updateOrdreDatoer(selectedOrdre, 'actual_end', e.target.value)} style={STYLES.input} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Økonomi - kun for managers */}
+        {canViewEconomy ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+            <div style={{ ...STYLES.card, textAlign: 'center' }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>KOSTPRIS</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>{totals.totalKost.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+            </div>
+            <div style={{ ...STYLES.card, textAlign: 'center' }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>SALGSPRIS</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary }}>{totals.totalSalg.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+            </div>
+            <div style={{ ...STYLES.card, textAlign: 'center', background: marginColor.bg }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>DB (KR.)</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: marginColor.color }}>{totals.dbKr.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+            </div>
+            <div style={{ ...STYLES.card, textAlign: 'center', background: marginColor.bg }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>DB (%)</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: marginColor.color }}>{totals.dbPct.toFixed(1)}%</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ ...STYLES.card, marginBottom: 24, textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>ORDREVÆRDI</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: COLORS.primary }}>{totals.totalSalg.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+          </div>
+        )}
+
+        {/* Linjer */}
+        <div style={{ marginBottom: 16 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Linjer ({ordreLinjer.length})</h2>
+        </div>
+
+        <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+          {ordreLinjer.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>Ingen linjer på denne ordre</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Type</th>
+                <th style={STYLES.th}>Beskrivelse</th>
+                <th style={{ ...STYLES.th, textAlign: 'right' }}>Antal</th>
+                {canViewEconomy && <th style={{ ...STYLES.th, textAlign: 'right' }}>Kost</th>}
+                <th style={{ ...STYLES.th, textAlign: 'right' }}>Salg</th>
+                <th style={{ ...STYLES.th, textAlign: 'right' }}>Total</th>
+              </tr></thead>
+              <tbody>
+                {ordreLinjer.map(l => (
+                  <tr key={l.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={STYLES.td}>
+                      <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, background: `${typeColors[l.type]}20`, color: typeColors[l.type] }}>
+                        {typeLabels[l.type]}
+                      </span>
+                    </td>
+                    <td style={STYLES.td}>{l.title}</td>
+                    <td style={{ ...STYLES.td, textAlign: 'right' }}>{l.quantity}</td>
+                    {canViewEconomy && <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.cost_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>}
+                    <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
+                    <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>{(l.quantity * l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Ordre-liste
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Ordrer</h1>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filteredOrdrer.length} af {ordrer.length} ordrer</p>
+        </div>
+      </div>
+
+      {/* Søgning og filtrering */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 250px' }}>
+            <input type="text" placeholder="🔍 Søg ordre, kunde, projekt..." value={search} onChange={e => setSearch(e.target.value)} style={STYLES.input} />
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle status</option>
+              <option value="oprettet">Oprettet</option>
+              <option value="planlagt">Planlagt</option>
+              <option value="igang">I gang</option>
+              <option value="afsluttet">Afsluttet</option>
+              <option value="faktureret">Faktureret</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {filteredOrdrer.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48, color: COLORS.textLight }}>
+          {ordrer.length === 0 ? 'Ingen ordrer endnu. Ordrer oprettes automatisk når tilbud accepteres.' : 'Ingen ordrer matcher søgningen'}
+        </div>
+      ) : (
+        <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr style={{ background: COLORS.bg }}>
+              <th style={STYLES.th}>Ordre</th>
+              <th style={STYLES.th}>Kunde</th>
+              <th style={STYLES.th}>Projekt</th>
+              <th style={{ ...STYLES.th, textAlign: 'right' }}>Værdi</th>
+              <th style={STYLES.th}>Status</th>
+              <th style={STYLES.th}>Dato</th>
+            </tr></thead>
+            <tbody>
+              {filteredOrdrer.map(o => (
+                <tr key={o.id} onClick={() => setSelectedOrdre(o)} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer' }}>
+                  <td style={STYLES.td}>
+                    <div style={{ fontWeight: 600, color: COLORS.primary }}>#{o.order_number}</div>
+                    <div style={{ fontSize: 13, color: COLORS.textLight }}>{o.title}</div>
+                  </td>
+                  <td style={STYLES.td}>
+                    {o.customers ? (o.customers.company || o.customers.name) : '-'}
+                  </td>
+                  <td style={STYLES.td}>
+                    {o.projects?.name || '-'}
+                  </td>
+                  <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>
+                    {Number(o.total_sale).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+                  </td>
+                  <td style={STYLES.td}>
+                    <span style={{ 
+                      padding: '4px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: statusColors[o.status]?.bg,
+                      color: statusColors[o.status]?.color
+                    }}>{statusLabels[o.status]}</span>
+                  </td>
+                  <td style={{ ...STYLES.td, color: COLORS.textLight }}>
+                    {new Date(o.created_at).toLocaleDateString('da-DK')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
