@@ -1072,6 +1072,7 @@ function ProjektForm({ initial, kunder, onSave, onCancel }) {
 
 function IndstillingerSystem() {
   // Alle hooks FØRST
+  const { user } = useAuth();
   const [brugere, setBrugere] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingBruger, setEditingBruger] = useState(null);
@@ -1079,6 +1080,8 @@ function IndstillingerSystem() {
   const [search, setSearch] = useState('');
   const [filterRolle, setFilterRolle] = useState('alle');
   const [filterAktiv, setFilterAktiv] = useState('alle');
+
+  const currentUserId = user?.id;
 
   useEffect(() => { loadBrugere(); }, []);
 
@@ -1089,6 +1092,16 @@ function IndstillingerSystem() {
   };
 
   const saveBruger = async (form) => {
+    // Beskyt mod at ændre sin egen admin-rolle eller deaktivere sig selv
+    const isEditingSelf = form.id === currentUserId;
+    const currentUserData = brugere.find(b => b.id === currentUserId);
+    
+    if (isEditingSelf && currentUserData?.role === 'admin') {
+      // Behold original rolle og aktiv status
+      form.role = 'admin';
+      form.active = true;
+    }
+
     const { error } = await supabase.from('profiles').update({
       name: form.name,
       role: form.role,
@@ -1195,7 +1208,7 @@ function IndstillingerSystem() {
 
         {showModal && (
           <Modal title="Rediger bruger" onClose={() => { setShowModal(false); setEditingBruger(null); }}>
-            <BrugerForm initial={editingBruger} onSave={(form) => { saveBruger(form); setSelectedBruger({ ...selectedBruger, ...form }); }} onCancel={() => { setShowModal(false); setEditingBruger(null); }} isEdit={true} />
+            <BrugerForm initial={editingBruger} currentUserId={currentUserId} onSave={(form) => { saveBruger(form); setSelectedBruger({ ...selectedBruger, ...form }); }} onCancel={() => { setShowModal(false); setEditingBruger(null); }} isEdit={true} />
           </Modal>
         )}
       </div>
@@ -1283,14 +1296,14 @@ function IndstillingerSystem() {
 
       {showModal && (
         <Modal title={editingBruger ? 'Rediger bruger' : 'Ny bruger'} onClose={() => { setShowModal(false); setEditingBruger(null); }}>
-          <BrugerForm initial={editingBruger} onSave={editingBruger ? saveBruger : createBruger} onCancel={() => { setShowModal(false); setEditingBruger(null); }} isEdit={!!editingBruger} />
+          <BrugerForm initial={editingBruger} currentUserId={currentUserId} onSave={editingBruger ? saveBruger : createBruger} onCancel={() => { setShowModal(false); setEditingBruger(null); }} isEdit={!!editingBruger} />
         </Modal>
       )}
     </div>
   );
 }
 
-function BrugerForm({ initial, onSave, onCancel, isEdit }) {
+function BrugerForm({ initial, currentUserId, onSave, onCancel, isEdit }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     email: initial?.email || '',
@@ -1302,6 +1315,10 @@ function BrugerForm({ initial, onSave, onCancel, isEdit }) {
     active: initial?.active !== false,
     password: ''
   });
+
+  // Self-edit check: admin kan ikke ændre sin egen rolle eller deaktivere sig selv
+  const isEditingSelf = isEdit && initial?.id === currentUserId;
+  const isSelfAdmin = isEditingSelf && initial?.role === 'admin';
 
   const allPermissions = [
     { id: 'kunder_se', label: 'Se kunder' },
@@ -1333,9 +1350,14 @@ function BrugerForm({ initial, onSave, onCancel, isEdit }) {
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
+      {isSelfAdmin && (
+        <div style={{ background: '#FEF3C7', padding: 12, borderRadius: 8, fontSize: 14, color: '#92400E' }}>
+          ⚠️ Du redigerer din egen profil. Du kan ikke ændre din rolle eller deaktivere dig selv.
+        </div>
+      )}
       <div>
         <label style={STYLES.label}>Email *</label>
-        <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={STYLES.input} disabled={isEdit} placeholder="email@eksempel.dk" />
+        <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={{ ...STYLES.input, background: isEdit ? '#F3F4F6' : 'white' }} disabled={isEdit} placeholder="email@eksempel.dk" />
       </div>
       {!isEdit && (
         <div>
@@ -1361,8 +1383,13 @@ function BrugerForm({ initial, onSave, onCancel, isEdit }) {
         </div>
       </div>
       <div>
-        <label style={STYLES.label}>Rolle</label>
-        <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={STYLES.select}>
+        <label style={STYLES.label}>Rolle {isSelfAdmin && <span style={{ fontWeight: 400, color: COLORS.textLight }}>(låst)</span>}</label>
+        <select 
+          value={form.role} 
+          onChange={e => setForm({ ...form, role: e.target.value })} 
+          style={{ ...STYLES.select, background: isSelfAdmin ? '#F3F4F6' : 'white', cursor: isSelfAdmin ? 'not-allowed' : 'pointer' }}
+          disabled={isSelfAdmin}
+        >
           <option value="saelger">Sælger</option>
           <option value="montoer">Montør</option>
           <option value="elev">Elev</option>
@@ -1389,9 +1416,14 @@ function BrugerForm({ initial, onSave, onCancel, isEdit }) {
       )}
       {isEdit && (
         <div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-            <input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} />
-            <span style={{ fontWeight: 500 }}>Bruger er aktiv</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: isSelfAdmin ? 'not-allowed' : 'pointer', opacity: isSelfAdmin ? 0.6 : 1 }}>
+            <input 
+              type="checkbox" 
+              checked={form.active} 
+              onChange={e => setForm({ ...form, active: e.target.checked })} 
+              disabled={isSelfAdmin}
+            />
+            <span style={{ fontWeight: 500 }}>Bruger er aktiv {isSelfAdmin && <span style={{ fontWeight: 400, color: COLORS.textLight }}>(låst)</span>}</span>
           </label>
         </div>
       )}
