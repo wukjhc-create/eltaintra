@@ -49,6 +49,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [section, setSection] = useState('dashboard');
+  const [selectedProjektId, setSelectedProjektId] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -79,15 +80,12 @@ export default function App() {
     setSection('dashboard');
   };
 
-  if (loading) return <LoadingScreen />;
-
-  // State til at navigere til specifikt projekt fra kundesiden
-  const [selectedProjektId, setSelectedProjektId] = useState(null);
-
   const navigateToProjekt = (projektId) => {
     setSelectedProjektId(projektId);
     setSection('projekter');
   };
+
+  if (loading) return <LoadingScreen />;
 
   return (
     <AuthContext.Provider value={{ user, profile, logout }}>
