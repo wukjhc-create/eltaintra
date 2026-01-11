@@ -1,34 +1,40 @@
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// ELTA SOLAR PLATFORM - Med Supabase Database
+// ELTASOLAR KOMPLET PLATFORM v2.0
+// Alle moduler: Kalkulation, Tilbud, Chat, Filer, Akkord, AI-tekst, PDF
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { supabase } from './supabase';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// KONFIGURATION & FARVER
+// KONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 const CONFIG = {
   companyName: 'Elta Solar',
   tagline: 'Fra sol til stikkontakt – nemt og sikkert',
+  vatRate: 25,
+  akkordMinuteRate: 5.33, // kr pr. akkordminut
 };
 
 const COLORS = {
-  primary: '#2E7D32',
-  primaryDark: '#1B5E20',
-  primaryLight: '#4CAF50',
-  accent: '#F5A623',
-  accentDark: '#E09000',
-  bg: '#F8FAFC',
-  card: '#FFFFFF',
-  text: '#1E293B',
-  textLight: '#64748B',
-  border: '#E2E8F0',
-  success: '#10B981',
-  warning: '#F59E0B',
-  error: '#EF4444',
-  info: '#3B82F6',
+  primary: '#2E7D32', primaryDark: '#1B5E20', primaryLight: '#4CAF50',
+  accent: '#F5A623', accentDark: '#E09000',
+  bg: '#F8FAFC', card: '#FFFFFF', text: '#1E293B', textLight: '#64748B', border: '#E2E8F0',
+  success: '#10B981', warning: '#F59E0B', error: '#EF4444', info: '#3B82F6',
+};
+
+const STYLES = {
+  label: { display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14, color: COLORS.text },
+  input: { width: '100%', padding: '12px 16px', border: `1px solid ${COLORS.border}`, borderRadius: 12, fontSize: 15, boxSizing: 'border-box' },
+  select: { width: '100%', padding: '12px 16px', border: `1px solid ${COLORS.border}`, borderRadius: 12, fontSize: 15, boxSizing: 'border-box', background: 'white' },
+  primaryBtn: { background: COLORS.primary, color: 'white', border: 'none', borderRadius: 12, padding: '12px 24px', fontWeight: 600, cursor: 'pointer', fontSize: 14 },
+  secondaryBtn: { background: COLORS.bg, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: '12px 24px', fontWeight: 600, cursor: 'pointer', fontSize: 14 },
+  card: { background: 'white', borderRadius: 16, padding: 24, border: `1px solid ${COLORS.border}` },
+  th: { textAlign: 'left', padding: '12px 16px', fontSize: 12, fontWeight: 600, color: COLORS.textLight, textTransform: 'uppercase' },
+  td: { padding: '16px', fontSize: 14 },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -51,21 +57,14 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      } else {
-        setLoading(false);
-      }
+      if (session?.user) fetchProfile(session.user.id);
+      else setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      } else {
-        setProfile(null);
-        setLoading(false);
-      }
+      if (session?.user) fetchProfile(session.user.id);
+      else { setProfile(null); setLoading(false); }
     });
 
     return () => subscription.unsubscribe();
@@ -79,17 +78,7 @@ export default function App() {
 
   const login = async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { success: false, error: error.message };
-    return { success: true };
-  };
-
-  const signUp = async (email, password, name, role = 'saelger') => {
-    const { error } = await supabase.auth.signUp({
-      email, password,
-      options: { data: { name, role } }
-    });
-    if (error) return { success: false, error: error.message };
-    return { success: true, message: 'Tjek din email for bekræftelse!' };
+    return error ? { success: false, error: error.message } : { success: true };
   };
 
   const logout = async () => {
@@ -108,21 +97,19 @@ export default function App() {
   if (loading) return <LoadingScreen />;
 
   return (
-    <AuthContext.Provider value={{ user, profile, login, signUp, logout, hasPermission }}>
+    <AuthContext.Provider value={{ user, profile, login, logout, hasPermission }}>
       <div style={{ minHeight: '100vh', background: COLORS.bg, fontFamily: "'Inter', -apple-system, sans-serif" }}>
-        {!user ? (
-          <LoginPage />
-        ) : (
+        {!user ? <LoginPage /> : (
           <>
             <Navigation section={section} setSection={setSection} />
             <main style={{ maxWidth: 1400, margin: '0 auto', padding: '24px' }}>
               {section === 'dashboard' && <Dashboard setSection={setSection} />}
-              {section === 'tilbud' && hasPermission('tilbud') && <TilbudSystem />}
-              {section === 'kunder' && hasPermission('kunder') && <KunderSystem />}
-              {section === 'produkter' && hasPermission('tilbud') && <ProdukterSystem />}
-              {section === 'uddannelse' && hasPermission('uddannelse') && <UddannelseSystem />}
+              {section === 'projekter' && <ProjektSystem />}
+              {section === 'kunder' && <KunderSystem />}
+              {section === 'tilbud' && <TilbudSystem />}
+              {section === 'normtider' && <NormtiderSystem />}
               {section === 'brugere' && hasPermission('brugere') && <BrugerSystem />}
-              {section === 'indstillinger' && hasPermission('indstillinger') && <Indstillinger />}
+              {section === 'indstillinger' && hasPermission('indstillinger') && <IndstillingerSystem />}
             </main>
           </>
         )}
@@ -167,7 +154,7 @@ function SolarLogo({ size = 40 }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// LOGIN PAGE
+// LOGIN
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function LoginPage() {
@@ -187,14 +174,7 @@ function LoginPage() {
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: `linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.primaryDark} 100%)`,
-      padding: 20
-    }}>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: `linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.primaryDark} 100%)`, padding: 20 }}>
       <div style={{ background: 'white', borderRadius: 24, padding: 48, width: '100%', maxWidth: 420, boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 8 }}>
@@ -206,29 +186,15 @@ function LoginPage() {
           </div>
           <p style={{ color: COLORS.textLight, fontSize: 14 }}>{CONFIG.tagline}</p>
         </div>
-
-        <h2 style={{ textAlign: 'center', marginBottom: 24, fontSize: 20, fontWeight: 600 }}>Log ind</h2>
-
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 16 }}>
-            <label style={labelStyle}>Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="din@email.dk" required style={inputStyle} />
-          </div>
-          <div style={{ marginBottom: 24 }}>
-            <label style={labelStyle}>Adgangskode</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required minLength={6} style={inputStyle} />
-          </div>
-
-          {error && <div style={{ padding: '12px 16px', background: '#FEE2E2', borderRadius: 12, color: COLORS.error, fontSize: 14, marginBottom: 16 }}>{error}</div>}
-
-          <button type="submit" disabled={loading} style={{ ...primaryButtonStyle, width: '100%', padding: '16px', fontSize: 16, opacity: loading ? 0.7 : 1 }}>
+          <FormField label="Email" type="email" value={email} onChange={setEmail} placeholder="din@email.dk" />
+          <FormField label="Adgangskode" type="password" value={password} onChange={setPassword} placeholder="••••••••" />
+          {error && <Alert type="error">{error}</Alert>}
+          <button type="submit" disabled={loading} style={{ ...STYLES.primaryBtn, width: '100%', padding: 16, marginTop: 8, opacity: loading ? 0.7 : 1 }}>
             {loading ? 'Logger ind...' : 'Log ind'}
           </button>
         </form>
-
-        <p style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: COLORS.textLight }}>
-          Kontakt administrator for at få adgang
-        </p>
+        <p style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: COLORS.textLight }}>Kontakt administrator for at få adgang</p>
       </div>
     </div>
   );
@@ -240,45 +206,39 @@ function LoginPage() {
 
 function Navigation({ section, setSection }) {
   const { profile, logout, hasPermission } = useAuth();
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '📊', perm: null },
-    { id: 'tilbud', label: 'Tilbud', icon: '📄', perm: 'tilbud' },
-    { id: 'kunder', label: 'Kunder', icon: '👥', perm: 'kunder' },
-    { id: 'produkter', label: 'Produkter', icon: '📦', perm: 'tilbud' },
-    { id: 'uddannelse', label: 'Uddannelse', icon: '🎓', perm: 'uddannelse' },
-    { id: 'brugere', label: 'Brugere', icon: '👤', perm: 'brugere' },
+  const menuItems = [
+    { id: 'dashboard', label: 'Overblik', icon: '📊' },
+    { id: 'projekter', label: 'Projekter', icon: '🔧' },
+    { id: 'kunder', label: 'Kunder', icon: '👥' },
+    { id: 'tilbud', label: 'Tilbud', icon: '📄' },
+    { id: 'normtider', label: 'Normtider', icon: '⏱️' },
+    { id: 'brugere', label: 'Brugere', icon: '🔐', perm: 'brugere' },
     { id: 'indstillinger', label: 'Indstillinger', icon: '⚙️', perm: 'indstillinger' },
   ];
 
   return (
-    <nav style={{ background: 'white', borderBottom: `1px solid ${COLORS.border}`, position: 'sticky', top: 0, zIndex: 100 }}>
-      <div style={{ maxWidth: 1400, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', height: 64 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginRight: 40 }}>
-          <SolarLogo size={36} />
-          <div style={{ fontWeight: 700, fontSize: 20 }}>
-            <span style={{ color: COLORS.primary }}>Elta</span>
-            <span style={{ color: COLORS.accent }}>Solar</span>
-          </div>
+    <nav style={{ background: 'white', borderBottom: `1px solid ${COLORS.border}`, padding: '0 24px', position: 'sticky', top: 0, zIndex: 100 }}>
+      <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <SolarLogo size={32} />
+          <span style={{ fontWeight: 700, fontSize: 18 }}><span style={{ color: COLORS.primary }}>Elta</span><span style={{ color: COLORS.accent }}>Solar</span></span>
         </div>
-        <div style={{ display: 'flex', gap: 4, flex: 1 }}>
-          {navItems.filter(i => !i.perm || hasPermission(i.perm)).map(item => (
-            <button key={item.id} onClick={() => setSection(item.id)} style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px',
-              border: 'none', borderRadius: 10,
-              background: section === item.id ? `${COLORS.primary}15` : 'transparent',
-              color: section === item.id ? COLORS.primary : COLORS.textLight,
-              fontWeight: section === item.id ? 600 : 500, fontSize: 14, cursor: 'pointer'
-            }}>
-              <span>{item.icon}</span><span>{item.label}</span>
-            </button>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {menuItems.map(item => (
+            (!item.perm || hasPermission(item.perm)) && (
+              <button key={item.id} onClick={() => setSection(item.id)} style={{
+                background: section === item.id ? COLORS.primary : 'transparent',
+                color: section === item.id ? 'white' : COLORS.text,
+                border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 500, cursor: 'pointer', fontSize: 13
+              }}>
+                {item.icon} {item.label}
+              </button>
+            )
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>{profile?.name || 'Bruger'}</div>
-            <div style={{ fontSize: 12, color: COLORS.textLight, textTransform: 'capitalize' }}>{profile?.role}</div>
-          </div>
-          <button onClick={logout} style={{ padding: '8px 16px', border: `1px solid ${COLORS.border}`, borderRadius: 8, background: 'white', cursor: 'pointer' }}>Log ud</button>
+          <span style={{ fontSize: 14, color: COLORS.textLight }}>{profile?.name || profile?.email}</span>
+          <button onClick={logout} style={{ ...STYLES.secondaryBtn, padding: '8px 16px' }}>Log ud</button>
         </div>
       </div>
     </nav>
@@ -290,300 +250,1421 @@ function Navigation({ section, setSection }) {
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function Dashboard({ setSection }) {
-  const { profile, hasPermission } = useAuth();
-  const [stats, setStats] = useState({ quotes: 0, customers: 0, products: 0 });
+  const [stats, setStats] = useState({ projects: 0, customers: 0, quotes: 0, pendingQuotes: 0 });
+  const [recentProjects, setRecentProjects] = useState([]);
+  const { profile } = useAuth();
 
-  useEffect(() => {
-    Promise.all([
-      supabase.from('quotes').select('id', { count: 'exact' }),
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [projects, customers, quotes, recent] = await Promise.all([
+      supabase.from('projects').select('id', { count: 'exact' }),
       supabase.from('customers').select('id', { count: 'exact' }),
-      supabase.from('products').select('id', { count: 'exact' })
-    ]).then(([q, c, p]) => setStats({ quotes: q.count || 0, customers: c.count || 0, products: p.count || 0 }));
-  }, []);
+      supabase.from('quotes').select('id, status', { count: 'exact' }),
+      supabase.from('projects').select('*, customers(name, company)').order('created_at', { ascending: false }).limit(5)
+    ]);
+    
+    const pendingCount = quotes.data?.filter(q => q.status === 'sent').length || 0;
+    
+    setStats({
+      projects: projects.count || 0,
+      customers: customers.count || 0,
+      quotes: quotes.count || 0,
+      pendingQuotes: pendingCount
+    });
+    setRecentProjects(recent.data || []);
+  };
 
   return (
     <div>
       <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Velkommen, {profile?.name?.split(' ')[0]}! ☀️</h1>
+        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Velkommen, {profile?.name || 'Bruger'}</h1>
         <p style={{ color: COLORS.textLight, marginTop: 4 }}>Her er dit overblik</p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 20, marginBottom: 32 }}>
-        <StatCard icon="📄" label="Tilbud" value={stats.quotes} color={COLORS.info} />
-        <StatCard icon="👥" label="Kunder" value={stats.customers} color={COLORS.success} />
-        <StatCard icon="📦" label="Produkter" value={stats.products} color={COLORS.accent} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, marginBottom: 32 }}>
+        <StatCard label="Projekter" value={stats.projects} icon="📁" color={COLORS.primary} onClick={() => setSection('projekter')} />
+        <StatCard label="Kunder" value={stats.customers} icon="👥" color={COLORS.info} onClick={() => setSection('kunder')} />
+        <StatCard label="Tilbud sendt" value={stats.quotes} icon="📄" color={COLORS.accent} onClick={() => setSection('tilbud')} />
+        <StatCard label="Afventer svar" value={stats.pendingQuotes} icon="⏳" color={COLORS.warning} />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-        {hasPermission('tilbud') && <ActionCard icon="📄" title="Opret tilbud" desc="Start et nyt tilbud" color={COLORS.primary} onClick={() => setSection('tilbud')} />}
-        {hasPermission('kunder') && <ActionCard icon="👥" title="Se kunder" desc="Administrer kunder" color={COLORS.accent} onClick={() => setSection('kunder')} />}
-        {hasPermission('uddannelse') && <ActionCard icon="🎓" title="Uddannelse" desc="AI-hjælpelærer" color={COLORS.info} onClick={() => setSection('uddannelse')} />}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 600 }}>Seneste projekter</h3>
+          {recentProjects.length === 0 ? (
+            <p style={{ color: COLORS.textLight }}>Ingen projekter endnu</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <tbody>
+                {recentProjects.map(p => (
+                  <tr key={p.id} style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+                    <td style={{ padding: '12px 0' }}>
+                      <div style={{ fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textLight }}>{p.customers?.company || p.customers?.name}</div>
+                    </td>
+                    <td style={{ textAlign: 'right' }}><StatusBadge status={p.status} /></td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMoney(p.total_price)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 600 }}>Hurtige handlinger</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <button onClick={() => setSection('projekter')} style={{ ...STYLES.primaryBtn }}>➕ Nyt projekt</button>
+            <button onClick={() => setSection('kunder')} style={{ ...STYLES.secondaryBtn }}>👤 Ny kunde</button>
+            <button onClick={() => setSection('tilbud')} style={{ ...STYLES.secondaryBtn }}>📄 Nyt tilbud</button>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function StatCard({ icon, label, value, color }) {
+function StatCard({ label, value, icon, color, onClick }) {
   return (
-    <div style={{ background: 'white', borderRadius: 16, padding: 20, border: `1px solid ${COLORS.border}`, display: 'flex', alignItems: 'center', gap: 16 }}>
+    <div onClick={onClick} style={{ ...STYLES.card, cursor: onClick ? 'pointer' : 'default', transition: 'transform 0.2s', display: 'flex', alignItems: 'center', gap: 16 }}
+      onMouseEnter={e => onClick && (e.currentTarget.style.transform = 'translateY(-2px)')}
+      onMouseLeave={e => onClick && (e.currentTarget.style.transform = 'translateY(0)')}>
       <div style={{ width: 48, height: 48, borderRadius: 12, background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>{icon}</div>
-      <div><div style={{ fontSize: 24, fontWeight: 700 }}>{value}</div><div style={{ fontSize: 13, color: COLORS.textLight }}>{label}</div></div>
+      <div>
+        <div style={{ fontSize: 28, fontWeight: 700, color }}>{value}</div>
+        <div style={{ fontSize: 14, color: COLORS.textLight }}>{label}</div>
+      </div>
     </div>
-  );
-}
-
-function ActionCard({ icon, title, desc, color, onClick }) {
-  return (
-    <button onClick={onClick} style={{ background: 'white', borderRadius: 16, padding: 24, border: `1px solid ${COLORS.border}`, textAlign: 'left', cursor: 'pointer', width: '100%' }}>
-      <div style={{ width: 48, height: 48, borderRadius: 12, background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, marginBottom: 16 }}>{icon}</div>
-      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>{title}</h3>
-      <p style={{ margin: '8px 0 0', fontSize: 14, color: COLORS.textLight }}>{desc}</p>
-    </button>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// KUNDER
+// PROJEKT SYSTEM MED KALKULATION OG AKKORD
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function ProjektSystem() {
+  const [projekter, setProjekter] = useState([]);
+  const [selectedProjekt, setSelectedProjekt] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { loadProjekter(); }, []);
+
+  const loadProjekter = async () => {
+    setLoading(true);
+    const { data } = await supabase.from('projects').select('*, customers(name, company)').order('created_at', { ascending: false });
+    setProjekter(data || []);
+    setLoading(false);
+  };
+
+  const createProjekt = async (form) => {
+    const { data, error } = await supabase.from('projects').insert([form]).select().single();
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setShowCreate(false);
+    setSelectedProjekt(data);
+    loadProjekter();
+  };
+
+  if (selectedProjekt) {
+    return <ProjektDetalje projekt={selectedProjekt} onBack={() => { setSelectedProjekt(null); loadProjekter(); }} />;
+  }
+
+  return (
+    <div>
+      <PageHeader title="Projekter & Kalkulation" subtitle="Opret projekter, kalkuler og generer tilbud" action={{ label: '+ Nyt projekt', onClick: () => setShowCreate(true) }} />
+
+      {loading ? <LoadingIndicator /> : projekter.length === 0 ? (
+        <EmptyState icon="📁" title="Ingen projekter endnu" subtitle="Opret dit første projekt for at komme i gang" action={{ label: '+ Opret projekt', onClick: () => setShowCreate(true) }} />
+      ) : (
+        <div style={{ ...STYLES.card, overflow: 'hidden', padding: 0 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Projekt</th>
+                <th style={STYLES.th}>Kunde</th>
+                <th style={STYLES.th}>Status</th>
+                <th style={STYLES.th}>Timer</th>
+                <th style={STYLES.th}>Pris</th>
+                <th style={STYLES.th}>DB%</th>
+                <th style={STYLES.th}>Akkord</th>
+                <th style={STYLES.th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {projekter.map(p => (
+                <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer' }} onClick={() => setSelectedProjekt(p)}>
+                  <td style={STYLES.td}>
+                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: COLORS.textLight }}>{p.address}</div>
+                  </td>
+                  <td style={STYLES.td}>{p.customers?.company || p.customers?.name || '-'}</td>
+                  <td style={STYLES.td}><StatusBadge status={p.status} /></td>
+                  <td style={STYLES.td}>{(p.total_labor_hours || 0).toFixed(1)}</td>
+                  <td style={STYLES.td}><strong>{formatMoney(p.total_price)}</strong></td>
+                  <td style={STYLES.td}><span style={{ color: (p.contribution_margin_percent || 0) >= 20 ? COLORS.success : COLORS.warning }}>{(p.contribution_margin_percent || 0).toFixed(1)}%</span></td>
+                  <td style={STYLES.td}>{formatMoney(p.akkord_total_amount)}</td>
+                  <td style={STYLES.td}><button style={STYLES.secondaryBtn}>Åbn →</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showCreate && (
+        <Modal title="Opret nyt projekt" onClose={() => setShowCreate(false)}>
+          <ProjektForm onSave={createProjekt} onCancel={() => setShowCreate(false)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ProjektForm({ onSave, onCancel, initial = {} }) {
+  const [kunder, setKunder] = useState([]);
+  const [form, setForm] = useState({ name: '', customer_id: '', address: '', city: '', zip: '', project_type: 'standard', description: '', ...initial });
+
+  useEffect(() => {
+    supabase.from('customers').select('id, name, company').then(({ data }) => setKunder(data || []));
+  }, []);
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <FormField label="Projektnavn *" value={form.name} onChange={v => setForm({ ...form, name: v })} placeholder="F.eks. Solcelleanlæg Villa Hansen" />
+      <div>
+        <label style={STYLES.label}>Kunde</label>
+        <select style={STYLES.select} value={form.customer_id || ''} onChange={e => setForm({ ...form, customer_id: e.target.value || null })}>
+          <option value="">Vælg kunde (valgfri)</option>
+          {kunder.map(k => <option key={k.id} value={k.id}>{k.company || k.name}</option>)}
+        </select>
+      </div>
+      <FormField label="Adresse" value={form.address} onChange={v => setForm({ ...form, address: v })} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
+        <FormField label="Postnr" value={form.zip} onChange={v => setForm({ ...form, zip: v })} />
+        <FormField label="By" value={form.city} onChange={v => setForm({ ...form, city: v })} />
+      </div>
+      <div>
+        <label style={STYLES.label}>Projekttype</label>
+        <select style={STYLES.select} value={form.project_type} onChange={e => setForm({ ...form, project_type: e.target.value })}>
+          <option value="standard">Standard</option>
+          <option value="renovation">Renovering (+30% tid)</option>
+          <option value="new_build">Nybyg</option>
+        </select>
+      </div>
+      <FormField label="Beskrivelse" value={form.description} onChange={v => setForm({ ...form, description: v })} multiline />
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={() => form.name && onSave(form)} style={STYLES.primaryBtn}>Opret projekt</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// PROJEKT DETALJE MED KALKULATION OG AKKORD
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function ProjektDetalje({ projekt, onBack }) {
+  const [items, setItems] = useState([]);
+  const [normtider, setNormtider] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [laborRates, setLaborRates] = useState([]);
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [activeTab, setActiveTab] = useState('kalkulation');
+  const [totals, setTotals] = useState({ materials: 0, labor: 0, hours: 0, cost: 0, price: 0, db: 0, dbPercent: 0, akkordMinutes: 0, akkordAmount: 0 });
+  const [markup, setMarkup] = useState(projekt.markup_percent || 25);
+
+  useEffect(() => { loadData(); }, []);
+  useEffect(() => { calculateTotals(); }, [items, markup]);
+
+  const loadData = async () => {
+    const [itemsRes, normRes, catRes, laborRes] = await Promise.all([
+      supabase.from('project_items').select('*').eq('project_id', projekt.id).order('sort_order'),
+      supabase.from('norm_times').select('*, work_categories(name)').eq('active', true),
+      supabase.from('work_categories').select('*').eq('active', true).order('sort_order'),
+      supabase.from('labor_rates').select('*').eq('active', true)
+    ]);
+    setItems(itemsRes.data || []);
+    setNormtider(normRes.data || []);
+    setCategories(catRes.data || []);
+    setLaborRates(laborRes.data || []);
+  };
+
+  const calculateTotals = () => {
+    let materials = 0, laborCost = 0, hours = 0, akkordMin = 0;
+    items.forEach(item => {
+      materials += item.material_cost_total || 0;
+      laborCost += item.labor_cost_total || 0;
+      hours += (item.total_minutes || 0) / 60;
+      akkordMin += item.akkord_minutes_total || 0;
+    });
+    const cost = materials + laborCost;
+    const price = cost * (1 + markup / 100);
+    const db = price - cost;
+    const dbPercent = price > 0 ? (db / price) * 100 : 0;
+    const akkordAmount = akkordMin * CONFIG.akkordMinuteRate;
+    setTotals({ materials, labor: laborCost, hours, cost, price, db, dbPercent, akkordMinutes: akkordMin, akkordAmount });
+  };
+
+  const addItem = async (normtid, quantity) => {
+    const defaultLaborRate = laborRates.find(r => r.name === 'Montør') || laborRates[0];
+    const isRenovation = projekt.project_type === 'renovation';
+    const difficultyFactor = isRenovation ? (normtid.renovation_factor || 1.3) : (normtid.difficulty_factor || 1);
+    
+    const totalMinutes = normtid.norm_minutes * quantity * difficultyFactor;
+    const materialCostTotal = (normtid.material_cost || 0) * quantity;
+    const laborCostTotal = defaultLaborRate ? (totalMinutes / 60) * defaultLaborRate.hourly_rate : 0;
+    const akkordMinutesTotal = (normtid.akkord_minutes || normtid.norm_minutes * 0.75) * quantity;
+    
+    const newItem = {
+      project_id: projekt.id,
+      norm_time_id: normtid.id,
+      name: normtid.name,
+      description: normtid.description,
+      unit: normtid.unit,
+      quantity,
+      norm_minutes: normtid.norm_minutes,
+      total_minutes: totalMinutes,
+      difficulty_factor: difficultyFactor,
+      material_cost_unit: normtid.material_cost || 0,
+      material_cost_total: materialCostTotal,
+      labor_rate_id: defaultLaborRate?.id,
+      labor_cost_total: laborCostTotal,
+      akkord_minutes_unit: normtid.akkord_minutes || normtid.norm_minutes * 0.75,
+      akkord_minutes_total: akkordMinutesTotal,
+      akkord_amount: akkordMinutesTotal * CONFIG.akkordMinuteRate,
+      cost_total: materialCostTotal + laborCostTotal,
+      sort_order: items.length
+    };
+
+    const { data, error } = await supabase.from('project_items').insert([newItem]).select().single();
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setItems([...items, data]);
+    setShowAddItem(false);
+  };
+
+  const updateItemQuantity = async (id, qty) => {
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    
+    const totalMin = item.norm_minutes * qty * (item.difficulty_factor || 1);
+    const matCost = (item.material_cost_unit || 0) * qty;
+    const labCost = (totalMin / 60) * (laborRates.find(r => r.id === item.labor_rate_id)?.hourly_rate || 285);
+    const akkordMin = (item.akkord_minutes_unit || item.norm_minutes * 0.75) * qty;
+    
+    const updates = {
+      quantity: qty,
+      total_minutes: totalMin,
+      material_cost_total: matCost,
+      labor_cost_total: labCost,
+      akkord_minutes_total: akkordMin,
+      akkord_amount: akkordMin * CONFIG.akkordMinuteRate,
+      cost_total: matCost + labCost
+    };
+    
+    await supabase.from('project_items').update(updates).eq('id', id);
+    setItems(items.map(i => i.id === id ? { ...i, ...updates } : i));
+  };
+
+  const deleteItem = async (id) => {
+    await supabase.from('project_items').delete().eq('id', id);
+    setItems(items.filter(i => i.id !== id));
+  };
+
+  const saveProject = async () => {
+    await supabase.from('projects').update({
+      total_materials: totals.materials,
+      total_labor_hours: totals.hours,
+      total_labor_cost: totals.labor,
+      total_cost: totals.cost,
+      markup_percent: markup,
+      total_price: totals.price,
+      contribution_margin: totals.db,
+      contribution_margin_percent: totals.dbPercent,
+      akkord_total_minutes: totals.akkordMinutes,
+      akkord_total_amount: totals.akkordAmount,
+      status: 'calculated'
+    }).eq('id', projekt.id);
+    alert('Projekt gemt!');
+  };
+
+  const generatePDF = () => {
+    const doc = new jsPDF();
+    
+    // Header
+    doc.setFontSize(20);
+    doc.setTextColor(46, 125, 50);
+    doc.text('Elta Solar', 20, 25);
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text('Kalkulation', 20, 32);
+    
+    // Projekt info
+    doc.setFontSize(14);
+    doc.setTextColor(0);
+    doc.text(projekt.name, 20, 50);
+    doc.setFontSize(10);
+    doc.text(`Adresse: ${projekt.address || ''} ${projekt.zip || ''} ${projekt.city || ''}`, 20, 58);
+    doc.text(`Type: ${projekt.project_type}`, 20, 64);
+    doc.text(`Dato: ${new Date().toLocaleDateString('da-DK')}`, 20, 70);
+    
+    // Tabel
+    const tableData = items.map(item => [
+      item.name,
+      item.quantity,
+      item.unit,
+      `${(item.total_minutes / 60).toFixed(1)} t`,
+      formatMoney(item.material_cost_total),
+      formatMoney(item.labor_cost_total),
+      formatMoney(item.cost_total)
+    ]);
+    
+    doc.autoTable({
+      startY: 80,
+      head: [['Beskrivelse', 'Antal', 'Enhed', 'Timer', 'Materialer', 'Løn', 'Total']],
+      body: tableData,
+      theme: 'striped',
+      headStyles: { fillColor: [46, 125, 50] }
+    });
+    
+    // Totaler
+    const finalY = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(12);
+    doc.text(`Materialer: ${formatMoney(totals.materials)}`, 120, finalY);
+    doc.text(`Løn: ${formatMoney(totals.labor)}`, 120, finalY + 7);
+    doc.text(`Avance (${markup}%): ${formatMoney(totals.db)}`, 120, finalY + 14);
+    doc.setFontSize(14);
+    doc.setTextColor(46, 125, 50);
+    doc.text(`Total: ${formatMoney(totals.price)}`, 120, finalY + 25);
+    
+    // Akkord
+    doc.setTextColor(0);
+    doc.setFontSize(10);
+    doc.text(`Akkord: ${(totals.akkordMinutes / 60).toFixed(1)} timer = ${formatMoney(totals.akkordAmount)}`, 20, finalY + 25);
+    
+    doc.save(`Kalkulation_${projekt.name.replace(/\s+/g, '_')}.pdf`);
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+        <div>
+          <button onClick={onBack} style={{ ...STYLES.secondaryBtn, marginBottom: 12 }}>← Tilbage</button>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{projekt.name}</h1>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{projekt.address} {projekt.zip} {projekt.city}</p>
+        </div>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button onClick={saveProject} style={STYLES.primaryBtn}>💾 Gem</button>
+          <button onClick={generatePDF} style={{ ...STYLES.secondaryBtn }}>📄 PDF</button>
+          <button style={{ ...STYLES.primaryBtn, background: COLORS.accent }}>📨 Send tilbud</button>
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 24 }}>
+        <SummaryCard label="Timer" value={totals.hours.toFixed(1)} color={COLORS.info} />
+        <SummaryCard label="Materialer" value={formatMoney(totals.materials)} color={COLORS.textLight} />
+        <SummaryCard label="Løn" value={formatMoney(totals.labor)} color={COLORS.textLight} />
+        <SummaryCard label="Salgspris" value={formatMoney(totals.price)} color={COLORS.primary} large />
+        <SummaryCard label="DB" value={`${totals.dbPercent.toFixed(1)}%`} subvalue={formatMoney(totals.db)} color={totals.dbPercent >= 20 ? COLORS.success : COLORS.warning} />
+        <SummaryCard label="Akkord" value={formatMoney(totals.akkordAmount)} subvalue={`${(totals.akkordMinutes/60).toFixed(1)} t`} color={COLORS.accent} />
+      </div>
+
+      {/* Markup Slider */}
+      <div style={{ ...STYLES.card, marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+          <span style={{ fontWeight: 600 }}>Avance:</span>
+          <input type="range" min="0" max="50" value={markup} onChange={e => setMarkup(Number(e.target.value))} style={{ flex: 1 }} />
+          <span style={{ fontWeight: 700, fontSize: 18, minWidth: 60 }}>{markup}%</span>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
+        {[{ id: 'kalkulation', label: 'Kalkulation' }, { id: 'akkord', label: 'Akkordark' }].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+            background: activeTab === tab.id ? COLORS.primary : 'white',
+            color: activeTab === tab.id ? 'white' : COLORS.text,
+            border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '10px 20px', fontWeight: 500, cursor: 'pointer'
+          }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'kalkulation' && (
+        <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '16px 20px', borderBottom: `1px solid ${COLORS.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Kalkulationsposter ({items.length})</h3>
+            <button onClick={() => setShowAddItem(true)} style={STYLES.primaryBtn}>+ Tilføj post</button>
+          </div>
+
+          {items.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: COLORS.textLight }}>Ingen poster. Klik "Tilføj post" for at begynde.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: COLORS.bg }}>
+                  <th style={STYLES.th}>Beskrivelse</th>
+                  <th style={{ ...STYLES.th, width: 70 }}>Antal</th>
+                  <th style={{ ...STYLES.th, width: 50 }}>Enhed</th>
+                  <th style={{ ...STYLES.th, width: 70 }}>Timer</th>
+                  <th style={{ ...STYLES.th, width: 90 }}>Materialer</th>
+                  <th style={{ ...STYLES.th, width: 90 }}>Løn</th>
+                  <th style={{ ...STYLES.th, width: 90 }}>Total</th>
+                  <th style={{ ...STYLES.th, width: 40 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map(item => (
+                  <tr key={item.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={STYLES.td}>
+                      <div style={{ fontWeight: 500 }}>{item.name}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textLight }}>{item.description}</div>
+                    </td>
+                    <td style={STYLES.td}>
+                      <input type="number" value={item.quantity} min="0.1" step="0.1" style={{ ...STYLES.input, width: 60, padding: 8, textAlign: 'center' }}
+                        onChange={e => updateItemQuantity(item.id, Number(e.target.value) || 1)} />
+                    </td>
+                    <td style={STYLES.td}>{item.unit}</td>
+                    <td style={STYLES.td}>{(item.total_minutes / 60).toFixed(1)}</td>
+                    <td style={STYLES.td}>{formatMoney(item.material_cost_total)}</td>
+                    <td style={STYLES.td}>{formatMoney(item.labor_cost_total)}</td>
+                    <td style={{ ...STYLES.td, fontWeight: 600 }}>{formatMoney(item.cost_total)}</td>
+                    <td style={STYLES.td}>
+                      <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', color: COLORS.error, cursor: 'pointer', fontSize: 18 }}>×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'akkord' && (
+        <AkkordArk items={items} totals={totals} projekt={projekt} />
+      )}
+
+      {showAddItem && (
+        <Modal title="Tilføj kalkulationspost" onClose={() => setShowAddItem(false)} wide>
+          <NormtidSelector normtider={normtider} categories={categories} onSelect={addItem} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function SummaryCard({ label, value, subvalue, color, large }) {
+  return (
+    <div style={{ ...STYLES.card, textAlign: 'center', padding: 16 }}>
+      <div style={{ fontSize: 11, color: COLORS.textLight, marginBottom: 4, textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ fontSize: large ? 24 : 18, fontWeight: 700, color }}>{value}</div>
+      {subvalue && <div style={{ fontSize: 11, color: COLORS.textLight }}>{subvalue}</div>}
+    </div>
+  );
+}
+
+function AkkordArk({ items, totals, projekt }) {
+  const groupedItems = items.reduce((acc, item) => {
+    const cat = item.category || 'Generelt';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(item);
+    return acc;
+  }, {});
+
+  const avgHourlyRate = totals.akkordMinutes > 0 ? (totals.akkordAmount / (totals.akkordMinutes / 60)) : 0;
+
+  return (
+    <div style={STYLES.card}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <h3 style={{ margin: 0 }}>Akkordark</h3>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <span style={{ padding: '6px 12px', background: COLORS.bg, borderRadius: 8, fontSize: 13 }}>
+            Akkordsats: {CONFIG.akkordMinuteRate.toFixed(2)} kr/min
+          </span>
+        </div>
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 24 }}>
+        <thead>
+          <tr style={{ background: COLORS.bg }}>
+            <th style={STYLES.th}>Arbejde</th>
+            <th style={{ ...STYLES.th, textAlign: 'center' }}>Antal</th>
+            <th style={{ ...STYLES.th, textAlign: 'center' }}>Enhed</th>
+            <th style={{ ...STYLES.th, textAlign: 'center' }}>Min/enhed</th>
+            <th style={{ ...STYLES.th, textAlign: 'center' }}>Total min</th>
+            <th style={{ ...STYLES.th, textAlign: 'right' }}>Akkordbeløb</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(item => (
+            <tr key={item.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+              <td style={STYLES.td}>{item.name}</td>
+              <td style={{ ...STYLES.td, textAlign: 'center' }}>{item.quantity}</td>
+              <td style={{ ...STYLES.td, textAlign: 'center' }}>{item.unit}</td>
+              <td style={{ ...STYLES.td, textAlign: 'center' }}>{(item.akkord_minutes_unit || 0).toFixed(1)}</td>
+              <td style={{ ...STYLES.td, textAlign: 'center' }}>{(item.akkord_minutes_total || 0).toFixed(0)}</td>
+              <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>{formatMoney(item.akkord_amount || 0)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr style={{ background: COLORS.bg, fontWeight: 700 }}>
+            <td colSpan={4} style={STYLES.td}>TOTAL</td>
+            <td style={{ ...STYLES.td, textAlign: 'center' }}>{totals.akkordMinutes.toFixed(0)} min</td>
+            <td style={{ ...STYLES.td, textAlign: 'right', color: COLORS.primary }}>{formatMoney(totals.akkordAmount)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, background: COLORS.bg, padding: 20, borderRadius: 12 }}>
+        <div>
+          <div style={{ fontSize: 12, color: COLORS.textLight }}>Total akkordtimer</div>
+          <div style={{ fontSize: 20, fontWeight: 700 }}>{(totals.akkordMinutes / 60).toFixed(1)} timer</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 12, color: COLORS.textLight }}>Total akkordbeløb</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary }}>{formatMoney(totals.akkordAmount)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 12, color: COLORS.textLight }}>Gns. timeløn (akkord)</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.success }}>{formatMoney(avgHourlyRate)}/time</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NormtidSelector({ normtider, categories, onSelect }) {
+  const [selectedCat, setSelectedCat] = useState('');
+  const [search, setSearch] = useState('');
+  const [quantity, setQuantity] = useState(1);
+
+  const filtered = normtider.filter(n => {
+    if (selectedCat && n.category_id !== selectedCat) return false;
+    if (search && !n.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+        <input placeholder="Søg normtid..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...STYLES.input, flex: 1 }} />
+        <select value={selectedCat} onChange={e => setSelectedCat(e.target.value)} style={{ ...STYLES.select, width: 200 }}>
+          <option value="">Alle kategorier</option>
+          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+
+      <div style={{ maxHeight: 400, overflow: 'auto', border: `1px solid ${COLORS.border}`, borderRadius: 12 }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: COLORS.textLight }}>Ingen normtider fundet</div>
+        ) : filtered.map(n => (
+          <div key={n.id} style={{ padding: 16, borderBottom: `1px solid ${COLORS.border}`, display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600 }}>{n.name}</div>
+              <div style={{ fontSize: 12, color: COLORS.textLight }}>{n.description}</div>
+              <div style={{ fontSize: 12, color: COLORS.info, marginTop: 4 }}>
+                {n.norm_minutes} min | {n.unit} | Mat: {formatMoney(n.material_cost || 0)} | Akkord: {n.akkord_minutes || Math.round(n.norm_minutes * 0.75)} min
+              </div>
+            </div>
+            <input type="number" min="0.1" step="0.1" value={quantity} onChange={e => setQuantity(Number(e.target.value) || 1)} style={{ ...STYLES.input, width: 70, padding: 8, textAlign: 'center' }} />
+            <button onClick={() => { onSelect(n, quantity); setQuantity(1); }} style={STYLES.primaryBtn}>Tilføj</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// KUNDER SYSTEM MED CHAT OG FILER
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function KunderSystem() {
   const [kunder, setKunder] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [selectedKunde, setSelectedKunde] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [selected, setSelected] = useState(null);
 
   useEffect(() => { loadKunder(); }, []);
-
   const loadKunder = async () => {
     const { data } = await supabase.from('customers').select('*').order('created_at', { ascending: false });
     setKunder(data || []);
-    setLoading(false);
   };
 
-  if (selected) return <KundeDetalje kunde={selected} onBack={() => { setSelected(null); loadKunder(); }} />;
+  const createKunde = async (form) => {
+    const { data, error } = await supabase.from('customers').insert([form]).select().single();
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setShowCreate(false);
+    setSelectedKunde(data);
+    loadKunder();
+  };
+
+  if (selectedKunde) {
+    return <KundeDetalje kunde={selectedKunde} onBack={() => { setSelectedKunde(null); loadKunder(); }} />;
+  }
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div><h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Kunder</h1><p style={{ color: COLORS.textLight, margin: '4px 0 0' }}>{kunder.length} kunder</p></div>
-        <button onClick={() => setShowCreate(true)} style={primaryButtonStyle}>+ Tilføj kunde</button>
-      </div>
-      {loading ? <p>Indlæser...</p> : (
-        <div style={{ display: 'grid', gap: 16 }}>
-          {kunder.map(k => (
-            <div key={k.id} onClick={() => setSelected(k)} style={{ background: 'white', borderRadius: 16, padding: 20, border: `1px solid ${COLORS.border}`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 20 }}>
-              <div style={{ width: 56, height: 56, borderRadius: 14, background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.primaryDark})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: 20 }}>
-                {k.name?.split(' ').map(n => n[0]).join('').substring(0, 2)}
-              </div>
-              <div style={{ flex: 1 }}><div style={{ fontWeight: 600, fontSize: 16 }}>{k.name}</div><div style={{ color: COLORS.textLight, fontSize: 14 }}>{k.email} {k.phone && `· ${k.phone}`}</div></div>
-              <div style={{ fontSize: 12, color: COLORS.textLight }}>{k.city}</div>
-            </div>
-          ))}
+      <PageHeader title="Kunder" subtitle="Administrer kunder, chat og dokumenter" action={{ label: '+ Ny kunde', onClick: () => setShowCreate(true) }} />
+
+      {kunder.length === 0 ? (
+        <EmptyState icon="👥" title="Ingen kunder endnu" subtitle="Opret din første kunde" action={{ label: '+ Opret kunde', onClick: () => setShowCreate(true) }} />
+      ) : (
+        <div style={{ ...STYLES.card, overflow: 'hidden', padding: 0 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Kunde</th>
+                <th style={STYLES.th}>Kontakt</th>
+                <th style={STYLES.th}>Adresse</th>
+                <th style={STYLES.th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {kunder.map(k => (
+                <tr key={k.id} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer' }} onClick={() => setSelectedKunde(k)}>
+                  <td style={STYLES.td}>
+                    <div style={{ fontWeight: 600 }}>{k.company || k.name}</div>
+                    {k.company && <div style={{ fontSize: 12, color: COLORS.textLight }}>{k.name}</div>}
+                  </td>
+                  <td style={STYLES.td}>
+                    <div>{k.email}</div>
+                    <div style={{ fontSize: 12, color: COLORS.textLight }}>{k.phone}</div>
+                  </td>
+                  <td style={STYLES.td}>{k.address}, {k.zip} {k.city}</td>
+                  <td style={STYLES.td}><button style={STYLES.secondaryBtn}>Åbn →</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-      {showCreate && <Modal title="Tilføj kunde" onClose={() => setShowCreate(false)}>
-        <KundeForm onSave={async (form) => { await supabase.from('customers').insert([form]); setShowCreate(false); loadKunder(); }} onCancel={() => setShowCreate(false)} />
-      </Modal>}
+
+      {showCreate && (
+        <Modal title="Opret kunde" onClose={() => setShowCreate(false)}>
+          <KundeForm onSave={createKunde} onCancel={() => setShowCreate(false)} />
+        </Modal>
+      )}
     </div>
   );
 }
 
 function KundeForm({ onSave, onCancel, initial = {} }) {
-  const [form, setForm] = useState({ name: '', email: '', phone: '', address: '', city: '', zip: '', ...initial });
+  const [form, setForm] = useState({ name: '', company: '', email: '', phone: '', address: '', city: '', zip: '', cvr: '', ...initial });
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <FormField label="Navn *" value={form.name} onChange={v => setForm({ ...form, name: v })} />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <FormField label="Email" value={form.email} onChange={v => setForm({ ...form, email: v })} />
+      <FormField label="Kontaktperson *" value={form.name} onChange={v => setForm({ ...form, name: v })} />
+      <FormField label="Firma" value={form.company} onChange={v => setForm({ ...form, company: v })} />
+      <FormField label="CVR" value={form.cvr} onChange={v => setForm({ ...form, cvr: v })} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <FormField label="Email" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} />
         <FormField label="Telefon" value={form.phone} onChange={v => setForm({ ...form, phone: v })} />
       </div>
       <FormField label="Adresse" value={form.address} onChange={v => setForm({ ...form, address: v })} />
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-        <FormField label="By" value={form.city} onChange={v => setForm({ ...form, city: v })} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
         <FormField label="Postnr" value={form.zip} onChange={v => setForm({ ...form, zip: v })} />
+        <FormField label="By" value={form.city} onChange={v => setForm({ ...form, city: v })} />
       </div>
-      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-        <button onClick={onCancel} style={secondaryButtonStyle}>Annuller</button>
-        <button onClick={() => onSave(form)} style={primaryButtonStyle}>Gem</button>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={() => form.name && onSave(form)} style={STYLES.primaryBtn}>Gem kunde</button>
       </div>
     </div>
   );
 }
 
 function KundeDetalje({ kunde, onBack }) {
+  const [activeTab, setActiveTab] = useState('info');
+  const [projekter, setProjekter] = useState([]);
   const [messages, setMessages] = useState([]);
-  const [newMsg, setNewMsg] = useState('');
+  const [files, setFiles] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const { profile } = useAuth();
+  const messagesEndRef = useRef(null);
 
-  useEffect(() => { loadMessages(); }, []);
-  const loadMessages = async () => { const { data } = await supabase.from('messages').select('*').eq('customer_id', kunde.id).order('created_at'); setMessages(data || []); };
-  const sendMessage = async () => { if (!newMsg.trim()) return; await supabase.from('messages').insert([{ customer_id: kunde.id, sender_type: 'staff', content: newMsg }]); setNewMsg(''); loadMessages(); };
+  useEffect(() => { loadData(); }, [kunde.id]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  const loadData = async () => {
+    const [projRes, msgRes, fileRes] = await Promise.all([
+      supabase.from('projects').select('*').eq('customer_id', kunde.id).order('created_at', { ascending: false }),
+      supabase.from('chat_messages').select('*, profiles(name)').eq('customer_id', kunde.id).order('created_at', { ascending: true }),
+      supabase.from('files').select('*').eq('customer_id', kunde.id).order('created_at', { ascending: false })
+    ]);
+    setProjekter(projRes.data || []);
+    setMessages(msgRes.data || []);
+    setFiles(fileRes.data || []);
+  };
+
+  const sendMessage = async () => {
+    if (!newMessage.trim()) return;
+    const { error } = await supabase.from('chat_messages').insert([{
+      customer_id: kunde.id,
+      sender_id: profile.id,
+      sender_type: 'staff',
+      message: newMessage
+    }]);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setNewMessage('');
+    loadData();
+    // TODO: Send email notification to customer
+  };
+
+  const uploadFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${kunde.id}/${Date.now()}.${fileExt}`;
+    
+    const { error: uploadError } = await supabase.storage.from('documents').upload(fileName, file);
+    if (uploadError) { alert('Fejl ved upload: ' + uploadError.message); return; }
+    
+    await supabase.from('files').insert([{
+      customer_id: kunde.id,
+      uploaded_by: profile.id,
+      filename: fileName,
+      original_name: file.name,
+      file_type: file.type,
+      file_size: file.size,
+      storage_path: fileName
+    }]);
+    
+    loadData();
+  };
 
   return (
     <div>
-      <button onClick={onBack} style={{ background: 'none', border: 'none', color: COLORS.textLight, cursor: 'pointer', marginBottom: 20 }}>← Tilbage</button>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 400px', gap: 24 }}>
-        <div style={{ background: 'white', borderRadius: 16, padding: 24, border: `1px solid ${COLORS.border}` }}>
-          <h1 style={{ margin: 0, fontSize: 24 }}>{kunde.name}</h1>
-          <p style={{ color: COLORS.textLight }}>{kunde.email} · {kunde.phone}</p>
-          <p style={{ marginTop: 16 }}>{kunde.address}, {kunde.zip} {kunde.city}</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+        <div>
+          <button onClick={onBack} style={{ ...STYLES.secondaryBtn, marginBottom: 12 }}>← Tilbage</button>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{kunde.company || kunde.name}</h1>
+          {kunde.company && <p style={{ color: COLORS.textLight, marginTop: 4 }}>{kunde.name}</p>}
         </div>
-        <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${COLORS.border}`, display: 'flex', flexDirection: 'column', height: 500 }}>
-          <div style={{ padding: 16, borderBottom: `1px solid ${COLORS.border}`, fontWeight: 600 }}>💬 Chat</div>
-          <div style={{ flex: 1, padding: 16, overflowY: 'auto' }}>
-            {messages.map(m => (
-              <div key={m.id} style={{ marginBottom: 12, textAlign: m.sender_type === 'staff' ? 'right' : 'left' }}>
-                <div style={{ display: 'inline-block', padding: '10px 14px', borderRadius: 12, background: m.sender_type === 'staff' ? COLORS.primary : COLORS.bg, color: m.sender_type === 'staff' ? 'white' : COLORS.text, maxWidth: '80%' }}>{m.content}</div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
+        {[{ id: 'info', label: '📋 Info' }, { id: 'chat', label: '💬 Chat' }, { id: 'filer', label: '📁 Filer' }, { id: 'projekter', label: '🔧 Projekter' }].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+            background: activeTab === tab.id ? COLORS.primary : 'white',
+            color: activeTab === tab.id ? 'white' : COLORS.text,
+            border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '10px 20px', fontWeight: 500, cursor: 'pointer'
+          }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'info' && (
+        <div style={STYLES.card}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+            <div>
+              <h3 style={{ margin: '0 0 16px', fontSize: 16 }}>Kontaktoplysninger</h3>
+              <InfoRow label="Email" value={kunde.email} />
+              <InfoRow label="Telefon" value={kunde.phone} />
+              <InfoRow label="CVR" value={kunde.cvr} />
+            </div>
+            <div>
+              <h3 style={{ margin: '0 0 16px', fontSize: 16 }}>Adresse</h3>
+              <InfoRow label="Adresse" value={kunde.address} />
+              <InfoRow label="Postnr/By" value={`${kunde.zip} ${kunde.city}`} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'chat' && (
+        <div style={{ ...STYLES.card, display: 'flex', flexDirection: 'column', height: 500 }}>
+          <div style={{ flex: 1, overflow: 'auto', marginBottom: 16 }}>
+            {messages.length === 0 ? (
+              <div style={{ textAlign: 'center', color: COLORS.textLight, padding: 40 }}>Ingen beskeder endnu</div>
+            ) : messages.map(msg => (
+              <div key={msg.id} style={{
+                marginBottom: 12,
+                display: 'flex',
+                justifyContent: msg.sender_type === 'staff' ? 'flex-end' : 'flex-start'
+              }}>
+                <div style={{
+                  maxWidth: '70%',
+                  padding: 12,
+                  borderRadius: 12,
+                  background: msg.sender_type === 'staff' ? COLORS.primary : COLORS.bg,
+                  color: msg.sender_type === 'staff' ? 'white' : COLORS.text
+                }}>
+                  <div style={{ fontSize: 11, marginBottom: 4, opacity: 0.7 }}>
+                    {msg.profiles?.name || 'Kunde'} • {new Date(msg.created_at).toLocaleString('da-DK')}
+                  </div>
+                  <div>{msg.message}</div>
+                </div>
               </div>
             ))}
+            <div ref={messagesEndRef} />
           </div>
-          <div style={{ padding: 16, borderTop: `1px solid ${COLORS.border}`, display: 'flex', gap: 12 }}>
-            <input value={newMsg} onChange={e => setNewMsg(e.target.value)} onKeyPress={e => e.key === 'Enter' && sendMessage()} placeholder="Skriv besked..." style={{ flex: 1, padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 10 }} />
-            <button onClick={sendMessage} style={primaryButtonStyle}>Send</button>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <input
+              value={newMessage}
+              onChange={e => setNewMessage(e.target.value)}
+              onKeyPress={e => e.key === 'Enter' && sendMessage()}
+              placeholder="Skriv besked..."
+              style={{ ...STYLES.input, flex: 1 }}
+            />
+            <AITextButton text={newMessage} onResult={setNewMessage} />
+            <button onClick={sendMessage} style={STYLES.primaryBtn}>Send</button>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
+      )}
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// PRODUKTER
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-
-function ProdukterSystem() {
-  const [produkter, setProdukter] = useState([]);
-  const [showCreate, setShowCreate] = useState(false);
-
-  useEffect(() => { loadProdukter(); }, []);
-  const loadProdukter = async () => { const { data } = await supabase.from('products').select('*').order('name'); setProdukter(data || []); };
-  const deleteProdukt = async (id) => { if (confirm('Slet produkt?')) { await supabase.from('products').delete().eq('id', id); loadProdukter(); } };
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Produkter & Pakker</h1>
-        <button onClick={() => setShowCreate(true)} style={primaryButtonStyle}>+ Tilføj produkt</button>
-      </div>
-      <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${COLORS.border}`, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr style={{ background: COLORS.bg }}><th style={thStyle}>Navn</th><th style={thStyle}>Kategori</th><th style={thStyle}>Pris</th><th style={thStyle}>Kostpris</th><th style={thStyle}>DB%</th><th style={thStyle}></th></tr></thead>
-          <tbody>
-            {produkter.map(p => {
-              const db = p.unit_price > 0 ? ((p.unit_price - p.cost_price) / p.unit_price * 100).toFixed(0) : 0;
-              return (
-                <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                  <td style={tdStyle}><div style={{ fontWeight: 600 }}>{p.name}</div><div style={{ fontSize: 12, color: COLORS.textLight }}>{p.description}</div></td>
-                  <td style={tdStyle}><span style={{ padding: '4px 10px', background: COLORS.bg, borderRadius: 8, fontSize: 12 }}>{p.category}</span></td>
-                  <td style={tdStyle}>{Number(p.unit_price).toLocaleString('da-DK')} kr</td>
-                  <td style={tdStyle}>{Number(p.cost_price).toLocaleString('da-DK')} kr</td>
-                  <td style={tdStyle}><span style={{ color: COLORS.success, fontWeight: 600 }}>{db}%</span></td>
-                  <td style={tdStyle}><button onClick={() => deleteProdukt(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>🗑️</button></td>
+      {activeTab === 'filer' && (
+        <div style={STYLES.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ margin: 0 }}>Dokumenter</h3>
+            <label style={{ ...STYLES.primaryBtn, cursor: 'pointer' }}>
+              📎 Upload fil
+              <input type="file" style={{ display: 'none' }} onChange={uploadFile} />
+            </label>
+          </div>
+          {files.length === 0 ? (
+            <div style={{ textAlign: 'center', color: COLORS.textLight, padding: 40 }}>Ingen filer endnu</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: COLORS.bg }}>
+                  <th style={STYLES.th}>Filnavn</th>
+                  <th style={STYLES.th}>Type</th>
+                  <th style={STYLES.th}>Størrelse</th>
+                  <th style={STYLES.th}>Dato</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {showCreate && <Modal title="Tilføj produkt" onClose={() => setShowCreate(false)}>
-        <ProduktForm onSave={async (form) => { await supabase.from('products').insert([form]); setShowCreate(false); loadProdukter(); }} onCancel={() => setShowCreate(false)} />
-      </Modal>}
+              </thead>
+              <tbody>
+                {files.map(f => (
+                  <tr key={f.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={STYLES.td}>{f.original_name}</td>
+                    <td style={STYLES.td}>{f.file_type}</td>
+                    <td style={STYLES.td}>{Math.round((f.file_size || 0) / 1024)} KB</td>
+                    <td style={STYLES.td}>{new Date(f.created_at).toLocaleDateString('da-DK')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'projekter' && (
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 16px' }}>Projekter for denne kunde</h3>
+          {projekter.length === 0 ? (
+            <div style={{ textAlign: 'center', color: COLORS.textLight, padding: 40 }}>Ingen projekter endnu</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: COLORS.bg }}>
+                  <th style={STYLES.th}>Projekt</th>
+                  <th style={STYLES.th}>Status</th>
+                  <th style={STYLES.th}>Pris</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projekter.map(p => (
+                  <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={STYLES.td}><strong>{p.name}</strong></td>
+                    <td style={STYLES.td}><StatusBadge status={p.status} /></td>
+                    <td style={STYLES.td}>{formatMoney(p.total_price)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function ProduktForm({ onSave, onCancel }) {
-  const [form, setForm] = useState({ name: '', description: '', category: 'El', unit_price: '', cost_price: '' });
+function InfoRow({ label, value }) {
   return (
-    <div style={{ display: 'grid', gap: 16 }}>
-      <FormField label="Navn" value={form.name} onChange={v => setForm({ ...form, name: v })} />
-      <FormField label="Beskrivelse" value={form.description} onChange={v => setForm({ ...form, description: v })} />
-      <div><label style={labelStyle}>Kategori</label><select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} style={selectStyle}><option>El</option><option>Solceller</option><option>Batteri</option><option>El Bil Lader</option><option>Service</option></select></div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <FormField label="Salgspris (kr)" type="number" value={form.unit_price} onChange={v => setForm({ ...form, unit_price: v })} />
-        <FormField label="Kostpris (kr)" type="number" value={form.cost_price} onChange={v => setForm({ ...form, cost_price: v })} />
-      </div>
-      <div style={{ display: 'flex', gap: 12 }}><button onClick={onCancel} style={secondaryButtonStyle}>Annuller</button><button onClick={() => onSave(form)} style={primaryButtonStyle}>Gem</button></div>
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 12, color: COLORS.textLight }}>{label}</div>
+      <div style={{ fontWeight: 500 }}>{value || '-'}</div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// TILBUD
+// TILBUD SYSTEM MED PDF
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function TilbudSystem() {
   const [tilbud, setTilbud] = useState([]);
+  const [selectedTilbud, setSelectedTilbud] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
 
   useEffect(() => { loadTilbud(); }, []);
-  const loadTilbud = async () => { const { data } = await supabase.from('quotes').select('*, customers(name)').order('created_at', { ascending: false }); setTilbud(data || []); };
+  const loadTilbud = async () => {
+    const { data } = await supabase.from('quotes').select('*, customers(name, company), projects(name)').order('created_at', { ascending: false });
+    setTilbud(data || []);
+  };
 
-  const statusColors = { nyt: { bg: '#DBEAFE', text: '#1D4ED8' }, afventer: { bg: '#FEF3C7', text: '#D97706' }, accepteret: { bg: '#D1FAE5', text: '#059669' }, afvist: { bg: '#FEE2E2', text: '#DC2626' } };
+  if (selectedTilbud) {
+    return <TilbudDetalje tilbud={selectedTilbud} onBack={() => { setSelectedTilbud(null); loadTilbud(); }} />;
+  }
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Tilbud</h1>
-        <button onClick={() => setShowCreate(true)} style={primaryButtonStyle}>+ Opret tilbud</button>
-      </div>
-      <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${COLORS.border}`, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr style={{ background: COLORS.bg }}><th style={thStyle}>Nr.</th><th style={thStyle}>Kunde</th><th style={thStyle}>Titel</th><th style={thStyle}>Pris</th><th style={thStyle}>Status</th></tr></thead>
-          <tbody>
-            {tilbud.map(t => (
-              <tr key={t.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                <td style={tdStyle}><span style={{ fontWeight: 600, color: COLORS.primary }}>{t.quote_number}</span></td>
-                <td style={tdStyle}>{t.customers?.name || '-'}</td>
-                <td style={tdStyle}>{t.title}</td>
-                <td style={tdStyle}>{Number(t.total_price).toLocaleString('da-DK')} kr</td>
-                <td style={tdStyle}><span style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, background: statusColors[t.status]?.bg, color: statusColors[t.status]?.text }}>{t.status}</span></td>
+      <PageHeader title="Tilbud" subtitle="Opret og send professionelle tilbud" action={{ label: '+ Nyt tilbud', onClick: () => setShowCreate(true) }} />
+
+      {tilbud.length === 0 ? (
+        <EmptyState icon="📄" title="Ingen tilbud endnu" subtitle="Opret dit første tilbud" action={{ label: '+ Opret tilbud', onClick: () => setShowCreate(true) }} />
+      ) : (
+        <div style={{ ...STYLES.card, overflow: 'hidden', padding: 0 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Tilbudsnr</th>
+                <th style={STYLES.th}>Kunde</th>
+                <th style={STYLES.th}>Projekt</th>
+                <th style={STYLES.th}>Beløb</th>
+                <th style={STYLES.th}>Status</th>
+                <th style={STYLES.th}>Dato</th>
+                <th style={STYLES.th}></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {showCreate && <TilbudModal onClose={() => { setShowCreate(false); loadTilbud(); }} />}
+            </thead>
+            <tbody>
+              {tilbud.map(t => (
+                <tr key={t.id} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer' }} onClick={() => setSelectedTilbud(t)}>
+                  <td style={STYLES.td}><strong>{t.quote_number}</strong></td>
+                  <td style={STYLES.td}>{t.customers?.company || t.customers?.name}</td>
+                  <td style={STYLES.td}>{t.projects?.name || t.title}</td>
+                  <td style={STYLES.td}>{formatMoney(t.total_incl_vat)}</td>
+                  <td style={STYLES.td}><QuoteStatusBadge status={t.status} /></td>
+                  <td style={STYLES.td}>{new Date(t.created_at).toLocaleDateString('da-DK')}</td>
+                  <td style={STYLES.td}><button style={STYLES.secondaryBtn}>Åbn →</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showCreate && (
+        <Modal title="Opret tilbud" onClose={() => setShowCreate(false)} wide>
+          <TilbudForm onSave={() => { setShowCreate(false); loadTilbud(); }} onCancel={() => setShowCreate(false)} />
+        </Modal>
+      )}
     </div>
   );
 }
 
-function TilbudModal({ onClose }) {
+function QuoteStatusBadge({ status }) {
+  const colors = {
+    draft: { bg: '#F3F4F6', color: '#6B7280' },
+    sent: { bg: '#FEF3C7', color: '#D97706' },
+    viewed: { bg: '#DBEAFE', color: '#1D4ED8' },
+    accepted: { bg: '#D1FAE5', color: '#059669' },
+    rejected: { bg: '#FEE2E2', color: '#DC2626' },
+  };
+  const labels = { draft: 'Kladde', sent: 'Sendt', viewed: 'Set', accepted: 'Accepteret', rejected: 'Afvist' };
+  const c = colors[status] || colors.draft;
+  return <span style={{ padding: '4px 12px', background: c.bg, color: c.color, borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{labels[status] || status}</span>;
+}
+
+function TilbudForm({ onSave, onCancel }) {
   const [kunder, setKunder] = useState([]);
-  const [produkter, setProdukter] = useState([]);
-  const [form, setForm] = useState({ customer_id: '', title: '' });
+  const [projekter, setProjekter] = useState([]);
+  const [packages, setPackages] = useState([]);
+  const [form, setForm] = useState({
+    customer_id: '',
+    project_id: '',
+    title: '',
+    introduction_text: 'Tak for jeres henvendelse. Vi har hermed fornøjelsen at fremsende tilbud på nedenstående arbejde.',
+    terms_text: 'Tilbuddet er ekskl. moms. Betaling netto 8 dage. Arbejdet udføres iht. gældende standarder.',
+    show_unit_prices: false,
+    show_line_totals: false,
+    validity_days: 30
+  });
   const [lines, setLines] = useState([]);
+  const { profile } = useAuth();
 
-  useEffect(() => { supabase.from('customers').select('*').then(({ data }) => setKunder(data || [])); supabase.from('products').select('*').then(({ data }) => setProdukter(data || [])); }, []);
+  useEffect(() => {
+    Promise.all([
+      supabase.from('customers').select('id, name, company'),
+      supabase.from('projects').select('id, name, customer_id, total_price'),
+      supabase.from('quote_packages').select('*').eq('active', true)
+    ]).then(([c, p, pkg]) => {
+      setKunder(c.data || []);
+      setProjekter(p.data || []);
+      setPackages(pkg.data || []);
+    });
+  }, []);
 
-  const addLine = (p) => setLines([...lines, { product_name: p.name, quantity: 1, unit_price: p.unit_price, total_price: p.unit_price }]);
-  const updateQty = (i, q) => { const l = [...lines]; l[i].quantity = q; l[i].total_price = q * l[i].unit_price; setLines(l); };
-  const total = lines.reduce((s, l) => s + Number(l.total_price), 0);
+  const addLine = () => {
+    setLines([...lines, { id: Date.now(), description: '', quantity: 1, unit: 'stk', unit_price: 0 }]);
+  };
 
-  const create = async () => {
-    const year = new Date().getFullYear();
-    const { count } = await supabase.from('quotes').select('*', { count: 'exact' });
-    const num = `T-${year}-${String((count || 0) + 1).padStart(3, '0')}`;
-    const { data: q } = await supabase.from('quotes').insert([{ quote_number: num, customer_id: form.customer_id || null, title: form.title, total_price: total, status: 'nyt' }]).select().single();
-    if (q && lines.length) await supabase.from('quote_lines').insert(lines.map(l => ({ ...l, quote_id: q.id })));
-    onClose();
+  const updateLine = (id, updates) => {
+    setLines(lines.map(l => l.id === id ? { ...l, ...updates } : l));
+  };
+
+  const removeLine = (id) => {
+    setLines(lines.filter(l => l.id !== id));
+  };
+
+  const addPackage = (pkg) => {
+    const items = JSON.parse(pkg.items || '[]');
+    const newLines = items.map((item, i) => ({
+      id: Date.now() + i,
+      description: item.name,
+      quantity: item.quantity || 1,
+      unit: 'stk',
+      unit_price: item.unit_price || 0
+    }));
+    setLines([...lines, ...newLines]);
+  };
+
+  const subtotal = lines.reduce((sum, l) => sum + (l.quantity * l.unit_price), 0);
+  const vatAmount = subtotal * 0.25;
+  const total = subtotal + vatAmount;
+
+  const handleSave = async () => {
+    const validUntil = new Date();
+    validUntil.setDate(validUntil.getDate() + form.validity_days);
+
+    const { data, error } = await supabase.from('quotes').insert([{
+      ...form,
+      customer_id: form.customer_id || null,
+      project_id: form.project_id || null,
+      created_by: profile.id,
+      subtotal,
+      vat_amount: vatAmount,
+      total_excl_vat: subtotal,
+      total_incl_vat: total,
+      valid_until: validUntil.toISOString()
+    }]).select().single();
+
+    if (error) { alert('Fejl: ' + error.message); return; }
+
+    // Insert lines
+    if (lines.length > 0) {
+      await supabase.from('quote_lines').insert(lines.map((l, i) => ({
+        quote_id: data.id,
+        description: l.description,
+        quantity: l.quantity,
+        unit: l.unit,
+        unit_price: l.unit_price,
+        total_price: l.quantity * l.unit_price,
+        sort_order: i
+      })));
+    }
+
+    onSave();
   };
 
   return (
-    <Modal title="Opret tilbud" onClose={onClose} wide>
-      <div style={{ display: 'grid', gap: 16, marginBottom: 24 }}>
-        <div><label style={labelStyle}>Kunde</label><select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} style={selectStyle}><option value="">Vælg kunde...</option>{kunder.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}</select></div>
-        <FormField label="Titel" value={form.title} onChange={v => setForm({ ...form, title: v })} />
+    <div style={{ display: 'grid', gap: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div>
+          <label style={STYLES.label}>Kunde</label>
+          <select style={STYLES.select} value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })}>
+            <option value="">Vælg kunde</option>
+            {kunder.map(k => <option key={k.id} value={k.id}>{k.company || k.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={STYLES.label}>Projekt (valgfri)</label>
+          <select style={STYLES.select} value={form.project_id} onChange={e => setForm({ ...form, project_id: e.target.value })}>
+            <option value="">Vælg projekt</option>
+            {projekter.filter(p => !form.customer_id || p.customer_id === form.customer_id).map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
-      <div style={{ marginBottom: 16 }}><label style={labelStyle}>Tilføj produkt</label><select onChange={e => { const p = produkter.find(x => x.id === e.target.value); if (p) addLine(p); e.target.value = ''; }} style={selectStyle}><option value="">Vælg...</option>{produkter.map(p => <option key={p.id} value={p.id}>{p.name} - {Number(p.unit_price).toLocaleString('da-DK')} kr</option>)}</select></div>
-      {lines.length > 0 && <div style={{ background: COLORS.bg, borderRadius: 12, padding: 16, marginBottom: 16 }}>
-        {lines.map((l, i) => <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}><span style={{ flex: 1 }}>{l.product_name}</span><input type="number" value={l.quantity} onChange={e => updateQty(i, parseInt(e.target.value) || 1)} style={{ width: 60, padding: 8, border: `1px solid ${COLORS.border}`, borderRadius: 6, textAlign: 'center' }} /><span style={{ width: 100, textAlign: 'right' }}>{Number(l.total_price).toLocaleString('da-DK')} kr</span><button onClick={() => setLines(lines.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>❌</button></div>)}
-        <div style={{ borderTop: `1px solid ${COLORS.border}`, marginTop: 12, paddingTop: 12, display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}><span>Total:</span><span>{total.toLocaleString('da-DK')} kr</span></div>
-      </div>}
-      <div style={{ display: 'flex', gap: 12 }}><button onClick={onClose} style={secondaryButtonStyle}>Annuller</button><button onClick={create} style={primaryButtonStyle}>Opret tilbud</button></div>
-    </Modal>
+
+      <FormField label="Titel *" value={form.title} onChange={v => setForm({ ...form, title: v })} placeholder="F.eks. Solcelleanlæg 6kW" />
+
+      <div>
+        <label style={STYLES.label}>Indledning</label>
+        <textarea value={form.introduction_text} onChange={e => setForm({ ...form, introduction_text: e.target.value })} style={{ ...STYLES.input, minHeight: 80 }} />
+        <AITextButton text={form.introduction_text} onResult={v => setForm({ ...form, introduction_text: v })} label="Forbedre tekst" />
+      </div>
+
+      {packages.length > 0 && (
+        <div>
+          <label style={STYLES.label}>Tilføj pakke</label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {packages.map(pkg => (
+              <button key={pkg.id} onClick={() => addPackage(pkg)} style={{ ...STYLES.secondaryBtn, padding: '8px 12px', fontSize: 13 }}>
+                {pkg.name} ({formatMoney(pkg.total_price)})
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <label style={STYLES.label}>Tilbudslinjer</label>
+          <button onClick={addLine} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', fontSize: 13 }}>+ Tilføj linje</button>
+        </div>
+        {lines.map((line, i) => (
+          <div key={line.id} style={{ display: 'grid', gridTemplateColumns: '3fr 80px 80px 100px 40px', gap: 8, marginBottom: 8 }}>
+            <input value={line.description} onChange={e => updateLine(line.id, { description: e.target.value })} placeholder="Beskrivelse" style={STYLES.input} />
+            <input type="number" value={line.quantity} onChange={e => updateLine(line.id, { quantity: Number(e.target.value) })} style={{ ...STYLES.input, textAlign: 'center' }} />
+            <input value={line.unit} onChange={e => updateLine(line.id, { unit: e.target.value })} style={STYLES.input} />
+            <input type="number" value={line.unit_price} onChange={e => updateLine(line.id, { unit_price: Number(e.target.value) })} style={{ ...STYLES.input, textAlign: 'right' }} />
+            <button onClick={() => removeLine(line.id)} style={{ background: 'none', border: 'none', color: COLORS.error, cursor: 'pointer', fontSize: 18 }}>×</button>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 16 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <input type="checkbox" checked={form.show_unit_prices} onChange={e => setForm({ ...form, show_unit_prices: e.target.checked })} />
+          Vis enhedspriser
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <input type="checkbox" checked={form.show_line_totals} onChange={e => setForm({ ...form, show_line_totals: e.target.checked })} />
+          Vis linjetotaler
+        </label>
+      </div>
+
+      <div style={{ background: COLORS.bg, padding: 16, borderRadius: 12, textAlign: 'right' }}>
+        <div style={{ marginBottom: 8 }}>Subtotal: {formatMoney(subtotal)}</div>
+        <div style={{ marginBottom: 8 }}>Moms (25%): {formatMoney(vatAmount)}</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary }}>Total: {formatMoney(total)}</div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 12 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={handleSave} style={STYLES.primaryBtn}>Gem tilbud</button>
+      </div>
+    </div>
+  );
+}
+
+function TilbudDetalje({ tilbud, onBack }) {
+  const [lines, setLines] = useState([]);
+
+  useEffect(() => {
+    supabase.from('quote_lines').select('*').eq('quote_id', tilbud.id).order('sort_order').then(({ data }) => setLines(data || []));
+  }, [tilbud.id]);
+
+  const generatePDF = () => {
+    const doc = new jsPDF();
+    
+    // Header
+    doc.setFontSize(24);
+    doc.setTextColor(46, 125, 50);
+    doc.text('Elta Solar', 20, 25);
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text('Fra sol til stikkontakt – nemt og sikkert', 20, 32);
+    
+    // Tilbudsinfo
+    doc.setFontSize(16);
+    doc.setTextColor(0);
+    doc.text('TILBUD', 20, 50);
+    doc.setFontSize(10);
+    doc.text(`Tilbudsnr: ${tilbud.quote_number}`, 20, 58);
+    doc.text(`Dato: ${new Date(tilbud.created_at).toLocaleDateString('da-DK')}`, 20, 64);
+    doc.text(`Gyldig til: ${tilbud.valid_until ? new Date(tilbud.valid_until).toLocaleDateString('da-DK') : '-'}`, 20, 70);
+    
+    // Kunde
+    doc.text(`Kunde: ${tilbud.customers?.company || tilbud.customers?.name || '-'}`, 120, 58);
+    
+    // Titel
+    doc.setFontSize(14);
+    doc.text(tilbud.title || '', 20, 85);
+    
+    // Indledning
+    if (tilbud.introduction_text) {
+      doc.setFontSize(10);
+      const introLines = doc.splitTextToSize(tilbud.introduction_text, 170);
+      doc.text(introLines, 20, 95);
+    }
+    
+    // Tabel
+    const tableData = lines.map(line => {
+      const row = [line.description];
+      if (tilbud.show_unit_prices) {
+        row.push(line.quantity, line.unit, formatMoney(line.unit_price));
+      }
+      if (tilbud.show_line_totals || !tilbud.show_unit_prices) {
+        row.push(formatMoney(line.total_price));
+      }
+      return row;
+    });
+    
+    const headers = ['Beskrivelse'];
+    if (tilbud.show_unit_prices) headers.push('Antal', 'Enhed', 'Enhedspris');
+    if (tilbud.show_line_totals || !tilbud.show_unit_prices) headers.push('Pris');
+    
+    doc.autoTable({
+      startY: 115,
+      head: [headers],
+      body: tableData,
+      theme: 'striped',
+      headStyles: { fillColor: [46, 125, 50] }
+    });
+    
+    // Totaler
+    const finalY = doc.lastAutoTable.finalY + 15;
+    doc.setFontSize(10);
+    doc.text(`Subtotal ekskl. moms: ${formatMoney(tilbud.total_excl_vat)}`, 120, finalY);
+    doc.text(`Moms (25%): ${formatMoney(tilbud.vat_amount)}`, 120, finalY + 7);
+    doc.setFontSize(14);
+    doc.setTextColor(46, 125, 50);
+    doc.text(`Total inkl. moms: ${formatMoney(tilbud.total_incl_vat)}`, 120, finalY + 18);
+    
+    // Vilkår
+    if (tilbud.terms_text) {
+      doc.setFontSize(8);
+      doc.setTextColor(100);
+      const termsLines = doc.splitTextToSize(tilbud.terms_text, 170);
+      doc.text(termsLines, 20, finalY + 35);
+    }
+    
+    doc.save(`Tilbud_${tilbud.quote_number}.pdf`);
+  };
+
+  const sendQuote = async () => {
+    // Mark as sent
+    await supabase.from('quotes').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', tilbud.id);
+    alert('Tilbud markeret som sendt! (Email-integration kræver opsætning)');
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+        <div>
+          <button onClick={onBack} style={{ ...STYLES.secondaryBtn, marginBottom: 12 }}>← Tilbage</button>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{tilbud.quote_number}</h1>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{tilbud.title}</p>
+        </div>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button onClick={generatePDF} style={STYLES.secondaryBtn}>📄 Download PDF</button>
+          <button onClick={sendQuote} style={STYLES.primaryBtn}>📨 Send til kunde</button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 16px' }}>Tilbudslinjer</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Beskrivelse</th>
+                <th style={STYLES.th}>Antal</th>
+                <th style={STYLES.th}>Pris</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map(l => (
+                <tr key={l.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                  <td style={STYLES.td}>{l.description}</td>
+                  <td style={STYLES.td}>{l.quantity} {l.unit}</td>
+                  <td style={STYLES.td}>{formatMoney(l.total_price)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 16px' }}>Oversigt</h3>
+          <InfoRow label="Kunde" value={tilbud.customers?.company || tilbud.customers?.name} />
+          <InfoRow label="Status" value={<QuoteStatusBadge status={tilbud.status} />} />
+          <InfoRow label="Gyldig til" value={tilbud.valid_until ? new Date(tilbud.valid_until).toLocaleDateString('da-DK') : '-'} />
+          <hr style={{ margin: '16px 0', border: 'none', borderTop: `1px solid ${COLORS.border}` }} />
+          <InfoRow label="Subtotal" value={formatMoney(tilbud.total_excl_vat)} />
+          <InfoRow label="Moms" value={formatMoney(tilbud.vat_amount)} />
+          <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary, marginTop: 16 }}>
+            Total: {formatMoney(tilbud.total_incl_vat)}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// BRUGERE
+// NORMTIDER SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function NormtiderSystem() {
+  const [normtider, setNormtider] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [selectedCat, setSelectedCat] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [normRes, catRes] = await Promise.all([
+      supabase.from('norm_times').select('*, work_categories(name)').order('name'),
+      supabase.from('work_categories').select('*').order('sort_order')
+    ]);
+    setNormtider(normRes.data || []);
+    setCategories(catRes.data || []);
+  };
+
+  const filtered = selectedCat ? normtider.filter(n => n.category_id === selectedCat) : normtider;
+
+  return (
+    <div>
+      <PageHeader title="Normtider" subtitle={`${normtider.length} standardtider for el-arbejde`} action={{ label: '+ Tilføj normtid', onClick: () => setShowCreate(true) }} />
+
+      {normtider.length === 0 ? (
+        <EmptyState icon="⏱️" title="Ingen normtider" subtitle="Kør SQL-scriptet i Supabase for at tilføje normtider" />
+      ) : (
+        <>
+          <div style={{ marginBottom: 16 }}>
+            <select value={selectedCat} onChange={e => setSelectedCat(e.target.value)} style={{ ...STYLES.select, width: 300 }}>
+              <option value="">Alle kategorier ({normtider.length})</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          <div style={{ ...STYLES.card, overflow: 'hidden', padding: 0 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: COLORS.bg }}>
+                  <th style={STYLES.th}>Kategori</th>
+                  <th style={STYLES.th}>Navn</th>
+                  <th style={STYLES.th}>Enhed</th>
+                  <th style={STYLES.th}>Normtid</th>
+                  <th style={STYLES.th}>Akkord</th>
+                  <th style={STYLES.th}>Materialer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(n => (
+                  <tr key={n.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={STYLES.td}><span style={{ padding: '4px 8px', background: COLORS.bg, borderRadius: 6, fontSize: 12 }}>{n.work_categories?.name}</span></td>
+                    <td style={STYLES.td}>
+                      <div style={{ fontWeight: 500 }}>{n.name}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textLight }}>{n.description}</div>
+                    </td>
+                    <td style={STYLES.td}>{n.unit}</td>
+                    <td style={STYLES.td}><strong>{n.norm_minutes} min</strong></td>
+                    <td style={STYLES.td}>{n.akkord_minutes || '-'} min</td>
+                    <td style={STYLES.td}>{formatMoney(n.material_cost || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// BRUGER SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function BrugerSystem() {
@@ -592,42 +1673,26 @@ function BrugerSystem() {
   const [showSuccess, setShowSuccess] = useState(null);
 
   useEffect(() => { loadBrugere(); }, []);
-  const loadBrugere = async () => { const { data } = await supabase.from('profiles').select('*').order('name'); setBrugere(data || []); };
+  const loadBrugere = async () => {
+    const { data } = await supabase.from('profiles').select('*').order('name');
+    setBrugere(data || []);
+  };
 
   const generatePassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-    let pass = '';
-    for (let i = 0; i < 12; i++) pass += chars.charAt(Math.floor(Math.random() * chars.length));
-    return pass;
+    return Array(12).fill(0).map(() => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
   };
 
   const createBruger = async (form) => {
     const tempPassword = generatePassword();
-    
-    // Create user in Supabase Auth
-    const { data, error } = await supabase.auth.admin.createUser({
+    const { error } = await supabase.auth.signUp({
       email: form.email,
       password: tempPassword,
-      email_confirm: true,
-      user_metadata: { name: form.name, role: form.role }
+      options: { data: { name: form.name, role: form.role } }
     });
-
-    if (error) {
-      // Fallback: use signUp if admin API not available
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: form.email,
-        password: tempPassword,
-        options: { data: { name: form.name, role: form.role } }
-      });
-      
-      if (signUpError) {
-        alert('Fejl: ' + signUpError.message);
-        return;
-      }
-    }
-
+    if (error) { alert('Fejl: ' + error.message); return; }
     setShowCreate(false);
-    setShowSuccess({ email: form.email, password: tempPassword, name: form.name });
+    setShowSuccess({ ...form, password: tempPassword });
     loadBrugere();
   };
 
@@ -635,162 +1700,304 @@ function BrugerSystem() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Brugerstyring</h1>
-          <p style={{ color: COLORS.textLight, margin: '4px 0 0', fontSize: 14 }}>Administrer systemets brugere</p>
-        </div>
-        <button onClick={() => setShowCreate(true)} style={primaryButtonStyle}>+ Opret bruger</button>
-      </div>
+      <PageHeader title="Brugerstyring" subtitle="Kun administrator kan oprette brugere" action={{ label: '+ Opret bruger', onClick: () => setShowCreate(true) }} />
 
-      <div style={{ background: 'white', borderRadius: 16, border: `1px solid ${COLORS.border}`, overflow: 'hidden' }}>
+      <div style={{ ...STYLES.card, overflow: 'hidden', padding: 0 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr style={{ background: COLORS.bg }}><th style={thStyle}>Bruger</th><th style={thStyle}>Rolle</th><th style={thStyle}>Rettigheder</th><th style={thStyle}>Status</th></tr></thead>
+          <thead>
+            <tr style={{ background: COLORS.bg }}>
+              <th style={STYLES.th}>Bruger</th>
+              <th style={STYLES.th}>Rolle</th>
+              <th style={STYLES.th}>Status</th>
+            </tr>
+          </thead>
           <tbody>
             {brugere.map(b => (
               <tr key={b.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                <td style={tdStyle}><div style={{ fontWeight: 600 }}>{b.name}</div><div style={{ fontSize: 12, color: COLORS.textLight }}>{b.email}</div></td>
-                <td style={tdStyle}><span style={{ padding: '4px 12px', background: rolleColors[b.role], borderRadius: 20, fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>{b.role}</span></td>
-                <td style={tdStyle}>{b.permissions?.map(p => <span key={p} style={{ marginRight: 4, padding: '2px 8px', background: COLORS.bg, borderRadius: 6, fontSize: 11 }}>{p}</span>)}</td>
-                <td style={tdStyle}><span style={{ color: COLORS.success, fontSize: 12 }}>● Aktiv</span></td>
+                <td style={STYLES.td}>
+                  <div style={{ fontWeight: 600 }}>{b.name}</div>
+                  <div style={{ fontSize: 12, color: COLORS.textLight }}>{b.email}</div>
+                </td>
+                <td style={STYLES.td}>
+                  <span style={{ padding: '4px 12px', background: rolleColors[b.role] || COLORS.bg, borderRadius: 20, fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>
+                    {b.role}
+                  </span>
+                </td>
+                <td style={STYLES.td}><span style={{ color: COLORS.success }}>● Aktiv</span></td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {showCreate && <Modal title="Opret ny bruger" onClose={() => setShowCreate(false)}>
-        <AdminBrugerForm onSave={createBruger} onCancel={() => setShowCreate(false)} />
-      </Modal>}
+      {showCreate && (
+        <Modal title="Opret ny bruger" onClose={() => setShowCreate(false)}>
+          <BrugerForm onSave={createBruger} onCancel={() => setShowCreate(false)} />
+        </Modal>
+      )}
 
-      {showSuccess && <Modal title="✅ Bruger oprettet" onClose={() => setShowSuccess(null)}>
-        <div style={{ background: '#D1FAE5', borderRadius: 12, padding: 20, marginBottom: 20 }}>
-          <p style={{ margin: 0, fontWeight: 600, color: COLORS.success }}>Brugeren er oprettet!</p>
-        </div>
-        <div style={{ background: COLORS.bg, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-          <p style={{ margin: '0 0 12px', fontSize: 14 }}><strong>Navn:</strong> {showSuccess.name}</p>
-          <p style={{ margin: '0 0 12px', fontSize: 14 }}><strong>Email:</strong> {showSuccess.email}</p>
-          <p style={{ margin: '0 0 12px', fontSize: 14 }}><strong>Midlertidig adgangskode:</strong></p>
-          <code style={{ display: 'block', background: 'white', padding: 12, borderRadius: 8, fontSize: 16, fontWeight: 600, letterSpacing: 1 }}>{showSuccess.password}</code>
-        </div>
-        <div style={{ background: '#FEF3C7', borderRadius: 12, padding: 16, marginBottom: 20 }}>
-          <p style={{ margin: 0, fontSize: 13, color: '#92400E' }}>
-            ⚠️ <strong>Vigtigt:</strong> Send disse oplysninger til brugeren. Adgangskoden vises kun denne ene gang.
-          </p>
-        </div>
-        <div style={{ background: 'white', border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: 16 }}>
-          <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600 }}>Kopier denne besked til brugeren:</p>
-          <textarea readOnly style={{ width: '100%', height: 120, padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, resize: 'none' }} value={`Hej ${showSuccess.name},
-
-Din bruger til Elta Solar platformen er nu oprettet.
-
-Log ind på: https://app.eltasolar.dk
-
-Email: ${showSuccess.email}
-Adgangskode: ${showSuccess.password}
-
-Du bedes ændre din adgangskode efter første login.
-
-Med venlig hilsen
-Elta Solar`} />
-        </div>
-        <div style={{ marginTop: 20 }}>
-          <button onClick={() => setShowSuccess(null)} style={primaryButtonStyle}>Luk</button>
-        </div>
-      </Modal>}
+      {showSuccess && (
+        <Modal title="✅ Bruger oprettet" onClose={() => setShowSuccess(null)}>
+          <Alert type="success">Brugeren er oprettet!</Alert>
+          <div style={{ background: COLORS.bg, borderRadius: 12, padding: 20, marginTop: 16 }}>
+            <InfoRow label="Navn" value={showSuccess.name} />
+            <InfoRow label="Email" value={showSuccess.email} />
+            <InfoRow label="Rolle" value={showSuccess.role} />
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight }}>Midlertidig adgangskode</div>
+              <code style={{ display: 'block', background: 'white', padding: 12, borderRadius: 8, fontSize: 16, fontWeight: 600, marginTop: 4 }}>
+                {showSuccess.password}
+              </code>
+            </div>
+          </div>
+          <Alert type="warning" style={{ marginTop: 16 }}>Send disse oplysninger til brugeren. Adgangskoden vises kun denne ene gang.</Alert>
+          <button onClick={() => setShowSuccess(null)} style={{ ...STYLES.primaryBtn, marginTop: 16 }}>Luk</button>
+        </Modal>
+      )}
     </div>
   );
 }
 
-function AdminBrugerForm({ onSave, onCancel }) {
+function BrugerForm({ onSave, onCancel }) {
   const [form, setForm] = useState({ name: '', email: '', role: 'saelger' });
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!form.name || !form.email) {
-      alert('Udfyld venligst navn og email');
-      return;
-    }
-    setSaving(true);
-    await onSave(form);
-    setSaving(false);
-  };
-
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <p style={{ margin: 0, fontSize: 14, color: COLORS.textLight }}>
-        Brugeren modtager en midlertidig adgangskode som vises efter oprettelse.
-      </p>
       <FormField label="Fulde navn *" value={form.name} onChange={v => setForm({ ...form, name: v })} />
       <FormField label="Email *" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} />
       <div>
-        <label style={labelStyle}>Rolle *</label>
-        <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={selectStyle}>
+        <label style={STYLES.label}>Rolle</label>
+        <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={STYLES.select}>
           <option value="saelger">Sælger</option>
           <option value="montoer">Montør</option>
           <option value="elev">Elev</option>
           <option value="admin">Administrator</option>
         </select>
       </div>
-      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-        <button onClick={onCancel} style={secondaryButtonStyle}>Annuller</button>
-        <button onClick={handleSave} disabled={saving} style={{ ...primaryButtonStyle, opacity: saving ? 0.7 : 1 }}>
-          {saving ? 'Opretter...' : 'Opret bruger'}
-        </button>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={() => form.name && form.email && onSave(form)} style={STYLES.primaryBtn}>Opret bruger</button>
       </div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// UDDANNELSE & INDSTILLINGER
+// INDSTILLINGER
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-function UddannelseSystem() {
+function IndstillingerSystem() {
+  const [settings, setSettings] = useState({});
+  const [laborRates, setLaborRates] = useState([]);
+  const [activeTab, setActiveTab] = useState('firma');
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [settingsRes, laborRes] = await Promise.all([
+      supabase.from('system_settings').select('*'),
+      supabase.from('labor_rates').select('*').order('name')
+    ]);
+    const s = {};
+    (settingsRes.data || []).forEach(row => s[row.key] = row.value);
+    setSettings(s);
+    setLaborRates(laborRes.data || []);
+  };
+
+  const updateSetting = async (key, value) => {
+    await supabase.from('system_settings').upsert({ key, value, updated_at: new Date().toISOString() });
+    setSettings({ ...settings, [key]: value });
+  };
+
   return (
-    <div><h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>🎓 Uddannelse</h1>
-      <div style={{ background: 'white', borderRadius: 16, padding: 40, border: `1px solid ${COLORS.border}`, textAlign: 'center' }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>🚧</div><h2>Kommer snart!</h2><p style={{ color: COLORS.textLight }}>AI-hjælpelærer aktiveres i næste opdatering.</p>
+    <div>
+      <PageHeader title="Indstillinger" subtitle="Konfigurer systemet" />
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
+        {[{ id: 'firma', label: '🏢 Firma' }, { id: 'lonsatser', label: '💰 Lønsatser' }, { id: 'tilbud', label: '📄 Tilbud' }].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+            background: activeTab === tab.id ? COLORS.primary : 'white',
+            color: activeTab === tab.id ? 'white' : COLORS.text,
+            border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '10px 20px', fontWeight: 500, cursor: 'pointer'
+          }}>
+            {tab.label}
+          </button>
+        ))}
       </div>
+
+      {activeTab === 'firma' && (
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 16px' }}>Firmainformation</h3>
+          <p style={{ color: COLORS.textLight }}>Kommer snart...</p>
+        </div>
+      )}
+
+      {activeTab === 'lonsatser' && (
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 16px' }}>Lønsatser</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Type</th>
+                <th style={STYLES.th}>Kostpris/time</th>
+                <th style={STYLES.th}>Salgspris/time</th>
+                <th style={STYLES.th}>Akkordsats</th>
+              </tr>
+            </thead>
+            <tbody>
+              {laborRates.map(r => (
+                <tr key={r.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                  <td style={STYLES.td}><strong>{r.name}</strong></td>
+                  <td style={STYLES.td}>{formatMoney(r.hourly_rate)}</td>
+                  <td style={STYLES.td}>{formatMoney(r.hourly_rate_sale)}</td>
+                  <td style={STYLES.td}>{formatMoney(r.akkord_rate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeTab === 'tilbud' && (
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 16px' }}>Tilbudsindstillinger</h3>
+          <p style={{ color: COLORS.textLight }}>Kommer snart...</p>
+        </div>
+      )}
     </div>
   );
 }
 
-function Indstillinger() {
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// AI TEKST FUNKTION
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function AITextButton({ text, onResult, label = '✨ AI' }) {
+  const [loading, setLoading] = useState(false);
+
+  const improveText = async () => {
+    if (!text?.trim()) return;
+    setLoading(true);
+    
+    // Simuleret AI-forbedring (i produktion: kald til Anthropic/OpenAI API)
+    const improved = await simulateAIImprovement(text);
+    onResult(improved);
+    setLoading(false);
+  };
+
   return (
-    <div><h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>⚙️ Indstillinger</h1>
-      <div style={{ background: 'white', borderRadius: 16, padding: 24, border: `1px solid ${COLORS.border}`, maxWidth: 600 }}>
-        <h3 style={{ margin: '0 0 16px' }}>Firma</h3><p><strong>Elta Solar</strong></p><p style={{ color: COLORS.textLight }}>kontakt@eltasolar.dk</p>
+    <button onClick={improveText} disabled={loading || !text?.trim()} style={{ ...STYLES.secondaryBtn, padding: '8px 12px', fontSize: 12, opacity: loading ? 0.7 : 1 }}>
+      {loading ? '...' : label}
+    </button>
+  );
+}
+
+async function simulateAIImprovement(text) {
+  // Simuleret forsinkelse
+  await new Promise(r => setTimeout(r, 500));
+  
+  // Simpel tekst-forbedring (i produktion erstattes med rigtig AI)
+  let improved = text.trim();
+  
+  // Capitalize first letter
+  improved = improved.charAt(0).toUpperCase() + improved.slice(1);
+  
+  // Add period if missing
+  if (!/[.!?]$/.test(improved)) improved += '.';
+  
+  // Expand short text
+  if (improved.length < 50) {
+    improved = `${improved} Vi udfører arbejdet professionelt og i henhold til gældende standarder. Kontakt os gerne for yderligere information.`;
+  }
+  
+  return improved;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// HJÆLPE-KOMPONENTER
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function PageHeader({ title, subtitle, action }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{title}</h1>
+        {subtitle && <p style={{ color: COLORS.textLight, marginTop: 4 }}>{subtitle}</p>}
       </div>
+      {action && <button onClick={action.onClick} style={STYLES.primaryBtn}>{action.label}</button>}
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// SHARED COMPONENTS
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-
-function Modal({ title, onClose, children, wide }) {
+function EmptyState({ icon, title, subtitle, action }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-      <div style={{ background: 'white', borderRadius: 20, padding: 32, width: '100%', maxWidth: wide ? 700 : 500 }}>
-        <h2 style={{ margin: '0 0 24px' }}>{title}</h2>
+    <div style={{ ...STYLES.card, textAlign: 'center', padding: 60 }}>
+      <div style={{ fontSize: 48, marginBottom: 16 }}>{icon}</div>
+      <h3 style={{ margin: '0 0 8px' }}>{title}</h3>
+      <p style={{ color: COLORS.textLight, marginBottom: 24 }}>{subtitle}</p>
+      {action && <button onClick={action.onClick} style={STYLES.primaryBtn}>{action.label}</button>}
+    </div>
+  );
+}
+
+function LoadingIndicator() {
+  return <div style={{ textAlign: 'center', padding: 40, color: COLORS.textLight }}>Indlæser...</div>;
+}
+
+function FormField({ label, value, onChange, type = 'text', placeholder, multiline }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label style={STYLES.label}>{label}</label>
+      {multiline ? (
+        <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ ...STYLES.input, minHeight: 80, resize: 'vertical' }} />
+      ) : (
+        <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={STYLES.input} />
+      )}
+    </div>
+  );
+}
+
+function Modal({ title, children, onClose, wide }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }} onClick={onClose}>
+      <div style={{ background: 'white', borderRadius: 20, padding: 32, width: '100%', maxWidth: wide ? 900 : 500, maxHeight: '90vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{title}</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: COLORS.textLight }}>×</button>
+        </div>
         {children}
       </div>
     </div>
   );
 }
 
-function FormField({ label, value, onChange, type = 'text' }) {
+function Alert({ type, children, style }) {
+  const colors = {
+    error: { bg: '#FEE2E2', color: '#DC2626' },
+    success: { bg: '#D1FAE5', color: '#059669' },
+    warning: { bg: '#FEF3C7', color: '#92400E' },
+    info: { bg: '#DBEAFE', color: '#1D4ED8' },
+  };
+  const c = colors[type] || colors.info;
   return (
-    <div><label style={labelStyle}>{label}</label><input type={type} value={value} onChange={e => onChange(e.target.value)} style={inputStyle} /></div>
+    <div style={{ padding: '12px 16px', background: c.bg, borderRadius: 12, color: c.color, fontSize: 14, ...style }}>
+      {children}
+    </div>
   );
 }
 
-const labelStyle = { display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 6 };
-const inputStyle = { width: '100%', padding: '12px 16px', border: `1px solid ${COLORS.border}`, borderRadius: 10, fontSize: 14, boxSizing: 'border-box' };
-const selectStyle = { width: '100%', padding: 12, border: `1px solid ${COLORS.border}`, borderRadius: 10 };
-const primaryButtonStyle = { padding: '12px 24px', background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.primaryDark})`, color: 'white', border: 'none', borderRadius: 12, fontWeight: 600, cursor: 'pointer' };
-const secondaryButtonStyle = { padding: '12px 24px', background: 'white', border: `1px solid ${COLORS.border}`, borderRadius: 12, cursor: 'pointer' };
-const thStyle = { padding: '14px 20px', textAlign: 'left', fontSize: 13, fontWeight: 600, color: COLORS.textLight };
-const tdStyle = { padding: '16px 20px' };
+function StatusBadge({ status }) {
+  const colors = {
+    draft: { bg: '#F3F4F6', color: '#6B7280' },
+    calculated: { bg: '#DBEAFE', color: '#1D4ED8' },
+    quoted: { bg: '#FEF3C7', color: '#D97706' },
+    accepted: { bg: '#D1FAE5', color: '#059669' },
+    completed: { bg: '#E0E7FF', color: '#4338CA' },
+  };
+  const labels = { draft: 'Kladde', calculated: 'Kalkuleret', quoted: 'Tilbud', accepted: 'Accepteret', completed: 'Afsluttet' };
+  const c = colors[status] || colors.draft;
+  return <span style={{ padding: '4px 12px', background: c.bg, color: c.color, borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{labels[status] || status}</span>;
+}
+
+function formatMoney(amount) {
+  return new Intl.NumberFormat('da-DK', { style: 'currency', currency: 'DKK', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount || 0);
+}
