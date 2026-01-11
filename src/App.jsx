@@ -1071,9 +1071,14 @@ function ProjektForm({ initial, kunder, onSave, onCancel }) {
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function IndstillingerSystem() {
+  // Alle hooks FØRST
   const [brugere, setBrugere] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingBruger, setEditingBruger] = useState(null);
+  const [selectedBruger, setSelectedBruger] = useState(null);
+  const [search, setSearch] = useState('');
+  const [filterRolle, setFilterRolle] = useState('alle');
+  const [filterAktiv, setFilterAktiv] = useState('alle');
 
   useEffect(() => { loadBrugere(); }, []);
 
@@ -1115,47 +1120,166 @@ function IndstillingerSystem() {
 
   const roleLabels = { admin: '👑 Administrator', saelger: '💼 Sælger', montoer: '🔧 Montør', elev: '📚 Elev' };
 
+  // Filtrering
+  let filteredBrugere = brugere.filter(b => {
+    if (filterRolle !== 'alle' && b.role !== filterRolle) return false;
+    if (filterAktiv === 'aktiv' && !b.active) return false;
+    if (filterAktiv === 'inaktiv' && b.active) return false;
+    return true;
+  });
+
+  // Søgning
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filteredBrugere = filteredBrugere.filter(b =>
+      (b.name || '').toLowerCase().includes(s) ||
+      (b.email || '').toLowerCase().includes(s) ||
+      (b.title || '').toLowerCase().includes(s)
+    );
+  }
+
+  // Bruger-detaljevisning
+  if (selectedBruger) {
+    return (
+      <div>
+        <button onClick={() => setSelectedBruger(null)} style={{ ...STYLES.secondaryBtn, marginBottom: 24 }}>← Tilbage til brugere</button>
+        
+        <div style={{ ...STYLES.card, marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{selectedBruger.name || selectedBruger.email}</h1>
+                <span style={{ 
+                  padding: '4px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                  background: selectedBruger.active ? '#D1FAE5' : '#FEE2E2',
+                  color: selectedBruger.active ? '#059669' : '#DC2626'
+                }}>{selectedBruger.active ? 'Aktiv' : 'Inaktiv'}</span>
+              </div>
+              {selectedBruger.title && <p style={{ color: COLORS.textLight, marginTop: 4 }}>{selectedBruger.title}</p>}
+            </div>
+            <button onClick={() => { setEditingBruger(selectedBruger); setShowModal(true); }} style={STYLES.secondaryBtn}>Rediger</button>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24, marginTop: 24 }}>
+            <div>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>EMAIL</div>
+              <div>📧 {selectedBruger.email}</div>
+            </div>
+            {selectedBruger.phone && (
+              <div>
+                <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>TELEFON</div>
+                <div>📞 {selectedBruger.phone}</div>
+              </div>
+            )}
+            <div>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>ROLLE</div>
+              <div>{roleLabels[selectedBruger.role] || selectedBruger.role}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>OPRETTET</div>
+              <div>{new Date(selectedBruger.created_at).toLocaleDateString('da-DK', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+            </div>
+          </div>
+
+          {selectedBruger.permissions && selectedBruger.permissions.length > 0 && (
+            <div style={{ marginTop: 24, padding: 16, background: COLORS.bg, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 8 }}>RETTIGHEDER</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {selectedBruger.permissions.map(p => (
+                  <span key={p} style={{ padding: '4px 8px', background: '#DBEAFE', color: '#1D4ED8', borderRadius: 4, fontSize: 12 }}>{p}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {showModal && (
+          <Modal title="Rediger bruger" onClose={() => { setShowModal(false); setEditingBruger(null); }}>
+            <BrugerForm initial={editingBruger} onSave={(form) => { saveBruger(form); setSelectedBruger({ ...selectedBruger, ...form }); }} onCancel={() => { setShowModal(false); setEditingBruger(null); }} isEdit={true} />
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Indstillinger</h1>
-          <p style={{ color: COLORS.textLight, marginTop: 4 }}>Brugere og administration</p>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filteredBrugere.length} af {brugere.length} brugere</p>
         </div>
         <button onClick={() => { setEditingBruger(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Ny bruger</button>
       </div>
 
-      <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr style={{ background: COLORS.bg }}>
-            <th style={STYLES.th}>Navn</th>
-            <th style={STYLES.th}>Email</th>
-            <th style={STYLES.th}>Rolle</th>
-            <th style={STYLES.th}>Status</th>
-            <th style={STYLES.th}></th>
-          </tr></thead>
-          <tbody>
-            {brugere.map(b => (
-              <tr key={b.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                <td style={STYLES.td}>
-                  <div style={{ fontWeight: 600 }}>{b.name || b.email}</div>
-                  {b.title && <div style={{ fontSize: 12, color: COLORS.textLight }}>{b.title}</div>}
-                </td>
-                <td style={STYLES.td}>{b.email}</td>
-                <td style={STYLES.td}>{roleLabels[b.role] || b.role}</td>
-                <td style={STYLES.td}>
-                  <span style={{ padding: '4px 8px', borderRadius: 4, fontSize: 12, background: b.active ? '#D1FAE5' : '#FEE2E2', color: b.active ? '#059669' : '#DC2626' }}>
-                    {b.active ? 'Aktiv' : 'Inaktiv'}
-                  </span>
-                </td>
-                <td style={STYLES.td}>
-                  <button onClick={() => { setEditingBruger(b); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}>Rediger</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Søgning og filtrering */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 250px' }}>
+            <input
+              type="text"
+              placeholder="🔍 Søg efter navn, email eller titel..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={STYLES.input}
+            />
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterRolle} onChange={e => setFilterRolle(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle roller</option>
+              <option value="admin">Administrator</option>
+              <option value="saelger">Sælger</option>
+              <option value="montoer">Montør</option>
+              <option value="elev">Elev</option>
+            </select>
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterAktiv} onChange={e => setFilterAktiv(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle status</option>
+              <option value="aktiv">Aktive</option>
+              <option value="inaktiv">Inaktive</option>
+            </select>
+          </div>
+        </div>
       </div>
+
+      {filteredBrugere.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48, color: COLORS.textLight }}>
+          Ingen brugere matcher søgningen
+        </div>
+      ) : (
+        <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr style={{ background: COLORS.bg }}>
+              <th style={STYLES.th}>Navn</th>
+              <th style={STYLES.th}>Email</th>
+              <th style={STYLES.th}>Rolle</th>
+              <th style={STYLES.th}>Status</th>
+              <th style={STYLES.th}></th>
+            </tr></thead>
+            <tbody>
+              {filteredBrugere.map(b => (
+                <tr key={b.id} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer' }} onClick={() => setSelectedBruger(b)}>
+                  <td style={STYLES.td}>
+                    <div style={{ fontWeight: 600, color: COLORS.primary }}>{b.name || b.email}</div>
+                    {b.title && <div style={{ fontSize: 12, color: COLORS.textLight }}>{b.title}</div>}
+                  </td>
+                  <td style={STYLES.td}>{b.email}</td>
+                  <td style={STYLES.td}>{roleLabels[b.role] || b.role}</td>
+                  <td style={STYLES.td}>
+                    <span style={{ padding: '4px 8px', borderRadius: 4, fontSize: 12, background: b.active ? '#D1FAE5' : '#FEE2E2', color: b.active ? '#059669' : '#DC2626' }}>
+                      {b.active ? 'Aktiv' : 'Inaktiv'}
+                    </span>
+                  </td>
+                  <td style={STYLES.td} onClick={e => e.stopPropagation()}>
+                    <button onClick={() => { setEditingBruger(b); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}>Rediger</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {showModal && (
         <Modal title={editingBruger ? 'Rediger bruger' : 'Ny bruger'} onClose={() => { setShowModal(false); setEditingBruger(null); }}>
