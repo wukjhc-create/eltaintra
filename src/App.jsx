@@ -97,6 +97,7 @@ export default function App() {
               {section === 'dashboard' && <Dashboard setSection={setSection} />}
               {section === 'kunder' && <KunderSystem onNavigateToProjekt={navigateToProjekt} />}
               {section === 'projekter' && <ProjekterSystem initialProjektId={selectedProjektId} onProjektOpened={() => setSelectedProjektId(null)} />}
+              {section === 'pakker' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <PakkerSystem />}
               {section === 'indstillinger' && profile?.role === 'admin' && <IndstillingerSystem />}
             </main>
           </>
@@ -148,11 +149,13 @@ function SolarLogo({ size = 40 }) {
 function Navigation({ section, setSection }) {
   const { profile, logout } = useAuth();
   const isAdmin = profile?.role === 'admin';
+  const canManage = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
   
   const menuItems = [
     { id: 'dashboard', label: 'Overblik', icon: '📊' },
     { id: 'kunder', label: 'Kunder', icon: '👥' },
     { id: 'projekter', label: 'Projekter', icon: '🔧' },
+    { id: 'pakker', label: 'Pakker', icon: '📦', managerOnly: true },
     { id: 'indstillinger', label: 'Indstillinger', icon: '⚙️', adminOnly: true },
   ];
 
@@ -165,7 +168,7 @@ function Navigation({ section, setSection }) {
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {menuItems.map(item => (
-            (!item.adminOnly || isAdmin) && (
+            (!item.adminOnly || isAdmin) && (!item.managerOnly || canManage) && (
               <button key={item.id} onClick={() => setSection(item.id)} style={{
                 background: section === item.id ? COLORS.primary : 'transparent',
                 color: section === item.id ? 'white' : COLORS.text,
@@ -1506,6 +1509,31 @@ function TilbudForm({ initial, onSave, onCancel }) {
     total_price: initial?.total_price || '',
     status: initial?.status || 'kladde'
   });
+  const [showPakkeModal, setShowPakkeModal] = useState(false);
+  const [pakker, setPakker] = useState([]);
+
+  useEffect(() => {
+    loadPakker();
+  }, []);
+
+  const loadPakker = async () => {
+    const { data, error } = await supabase
+      .from('quote_packages')
+      .select('*')
+      .eq('active', true)
+      .order('title');
+    if (!error) setPakker(data || []);
+  };
+
+  const selectPakke = (pakke) => {
+    setForm({
+      ...form,
+      title: pakke.title,
+      description: pakke.description || '',
+      total_price: pakke.default_price || ''
+    });
+    setShowPakkeModal(false);
+  };
 
   const handleSubmit = () => {
     if (!form.title.trim()) { alert('Titel er påkrævet'); return; }
@@ -1514,6 +1542,18 @@ function TilbudForm({ initial, onSave, onCancel }) {
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
+      {/* Pakkevalg knap - kun ved nyt tilbud */}
+      {!initial && (
+        <div style={{ background: '#F0F9FF', padding: 12, borderRadius: 8, border: '1px dashed #0EA5E9' }}>
+          <button 
+            onClick={() => setShowPakkeModal(true)} 
+            style={{ ...STYLES.secondaryBtn, width: '100%', background: 'white' }}
+          >
+            📦 Tilføj fra pakkebibliotek
+          </button>
+        </div>
+      )}
+
       <div>
         <label style={STYLES.label}>Titel *</label>
         <input 
@@ -1558,6 +1598,280 @@ function TilbudForm({ initial, onSave, onCancel }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
         <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret tilbud'}</button>
+      </div>
+
+      {/* Pakke-modal */}
+      {showPakkeModal && (
+        <Modal title="Vælg pakke fra bibliotek" onClose={() => setShowPakkeModal(false)}>
+          {pakker.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📦</div>
+              <p>Ingen aktive pakker i biblioteket</p>
+              <p style={{ fontSize: 13 }}>Opret pakker under 📦 Pakker i menuen</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflow: 'auto' }}>
+              {pakker.map(p => (
+                <div 
+                  key={p.id}
+                  onClick={() => selectPakke(p)}
+                  style={{ 
+                    padding: 16, 
+                    background: COLORS.bg, 
+                    borderRadius: 8, 
+                    cursor: 'pointer',
+                    border: `1px solid ${COLORS.border}`,
+                    transition: 'all 0.15s'
+                  }}
+                  onMouseOver={e => e.currentTarget.style.borderColor = COLORS.primary}
+                  onMouseOut={e => e.currentTarget.style.borderColor = COLORS.border}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ fontWeight: 600 }}>{p.title}</div>
+                    <div style={{ fontWeight: 700, color: COLORS.primary }}>
+                      {Number(p.default_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+                    </div>
+                  </div>
+                  {p.description && (
+                    <div style={{ fontSize: 13, color: COLORS.textLight, marginTop: 4 }}>
+                      {p.description.length > 100 ? p.description.slice(0, 100) + '...' : p.description}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// PAKKER SYSTEM (Pakkebibliotek)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function PakkerSystem() {
+  const [pakker, setPakker] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editingPakke, setEditingPakke] = useState(null);
+  const [search, setSearch] = useState('');
+  const [filterAktiv, setFilterAktiv] = useState('aktiv');
+
+  useEffect(() => { loadPakker(); }, []);
+
+  const loadPakker = async () => {
+    const { data, error } = await supabase
+      .from('quote_packages')
+      .select('*')
+      .order('title');
+    if (error) { console.error(error); return; }
+    setPakker(data || []);
+  };
+
+  const savePakke = async (form) => {
+    const payload = {
+      title: form.title,
+      description: form.description || null,
+      default_price: parseFloat(form.default_price) || 0,
+      active: form.active !== false
+    };
+
+    if (editingPakke) {
+      const { error } = await supabase.from('quote_packages').update(payload).eq('id', editingPakke.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    } else {
+      const { error } = await supabase.from('quote_packages').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    }
+    setShowModal(false);
+    setEditingPakke(null);
+    loadPakker();
+  };
+
+  const deletePakke = async (pakke) => {
+    if (!confirm(`Slet pakken "${pakke.title}"?`)) return;
+    const { error } = await supabase.from('quote_packages').delete().eq('id', pakke.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadPakker();
+  };
+
+  const toggleAktiv = async (pakke) => {
+    const { error } = await supabase.from('quote_packages').update({ active: !pakke.active }).eq('id', pakke.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadPakker();
+  };
+
+  // Filtrering
+  let filteredPakker = pakker.filter(p => {
+    if (filterAktiv === 'aktiv' && !p.active) return false;
+    if (filterAktiv === 'inaktiv' && p.active) return false;
+    return true;
+  });
+
+  // Søgning
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filteredPakker = filteredPakker.filter(p =>
+      (p.title || '').toLowerCase().includes(s) ||
+      (p.description || '').toLowerCase().includes(s)
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>📦 Pakkebibliotek</h1>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filteredPakker.length} af {pakker.length} pakker</p>
+        </div>
+        <button onClick={() => { setEditingPakke(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Ny pakke</button>
+      </div>
+
+      {/* Søgning og filtrering */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 300px' }}>
+            <input
+              type="text"
+              placeholder="🔍 Søg efter pakkenavn eller beskrivelse..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={STYLES.input}
+            />
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterAktiv} onChange={e => setFilterAktiv(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle status</option>
+              <option value="aktiv">Aktive</option>
+              <option value="inaktiv">Inaktive</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {pakker.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48 }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>📦</div>
+          <h3>Ingen pakker endnu</h3>
+          <p style={{ color: COLORS.textLight }}>Opret standardpakker som kan indsættes i tilbud</p>
+          <button onClick={() => setShowModal(true)} style={{ ...STYLES.primaryBtn, marginTop: 16 }}>+ Opret pakke</button>
+        </div>
+      ) : filteredPakker.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48, color: COLORS.textLight }}>
+          Ingen pakker matcher søgningen
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 16 }}>
+          {filteredPakker.map(p => (
+            <div key={p.id} style={{ ...STYLES.card }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 16 }}>{p.title}</span>
+                    <span style={{ 
+                      padding: '2px 8px', 
+                      borderRadius: 4, 
+                      fontSize: 11, 
+                      fontWeight: 600,
+                      background: p.active ? '#D1FAE5' : '#FEE2E2',
+                      color: p.active ? '#059669' : '#DC2626'
+                    }}>{p.active ? 'Aktiv' : 'Inaktiv'}</span>
+                  </div>
+                  {p.description && (
+                    <p style={{ color: COLORS.textLight, marginTop: 8, whiteSpace: 'pre-wrap', fontSize: 14 }}>
+                      {p.description}
+                    </p>
+                  )}
+                  <div style={{ marginTop: 12, fontSize: 18, fontWeight: 700, color: COLORS.primary }}>
+                    {Number(p.default_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => toggleAktiv(p)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}>
+                    {p.active ? 'Deaktiver' : 'Aktiver'}
+                  </button>
+                  <button onClick={() => { setEditingPakke(p); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}>
+                    Rediger
+                  </button>
+                  <button onClick={() => deletePakke(p)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}>
+                    Slet
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showModal && (
+        <Modal title={editingPakke ? 'Rediger pakke' : 'Ny pakke'} onClose={() => { setShowModal(false); setEditingPakke(null); }}>
+          <PakkeForm initial={editingPakke} onSave={savePakke} onCancel={() => { setShowModal(false); setEditingPakke(null); }} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function PakkeForm({ initial, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id: initial?.id || null,
+    title: initial?.title || '',
+    description: initial?.description || '',
+    default_price: initial?.default_price || '',
+    active: initial?.active !== false
+  });
+
+  const handleSubmit = () => {
+    if (!form.title.trim()) { alert('Titel er påkrævet'); return; }
+    onSave(form);
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div>
+        <label style={STYLES.label}>Pakkenavn *</label>
+        <input 
+          value={form.title} 
+          onChange={e => setForm({ ...form, title: e.target.value })} 
+          style={STYLES.input} 
+          placeholder="F.eks. Solcelleanlæg 10kW komplet" 
+        />
+      </div>
+      <div>
+        <label style={STYLES.label}>Beskrivelse</label>
+        <textarea 
+          value={form.description} 
+          onChange={e => setForm({ ...form, description: e.target.value })} 
+          style={{ ...STYLES.input, minHeight: 120, resize: 'vertical' }} 
+          placeholder="Detaljeret beskrivelse af hvad pakken indeholder..."
+        />
+      </div>
+      <div>
+        <label style={STYLES.label}>Standardpris (kr.)</label>
+        <input 
+          type="number" 
+          value={form.default_price} 
+          onChange={e => setForm({ ...form, default_price: e.target.value })} 
+          style={STYLES.input} 
+          placeholder="0.00"
+          step="0.01"
+          min="0"
+        />
+      </div>
+      <div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <input 
+            type="checkbox" 
+            checked={form.active} 
+            onChange={e => setForm({ ...form, active: e.target.checked })} 
+          />
+          <span style={{ fontWeight: 500 }}>Pakke er aktiv (kan vælges i tilbud)</span>
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret pakke'}</button>
       </div>
     </div>
   );
