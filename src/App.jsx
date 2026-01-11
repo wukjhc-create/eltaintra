@@ -1808,6 +1808,7 @@ function IndstillingerSystem() {
   const [showSuccess, setShowSuccess] = useState(null);
   const [editingRate, setEditingRate] = useState(null);
   const [editingNorm, setEditingNorm] = useState(null);
+  const [showCreateNorm, setShowCreateNorm] = useState(false);
 
   useEffect(() => { loadAllData(); }, []);
 
@@ -1832,6 +1833,7 @@ function IndstillingerSystem() {
     { id: 'brugere', label: '👥 Brugere', icon: '👥' },
     { id: 'firma', label: '🏢 Firma', icon: '🏢' },
     { id: 'lonsatser', label: '💰 Lønsatser', icon: '💰' },
+    { id: 'kategorier', label: '📁 Kategorier', icon: '📁' },
     { id: 'normtider', label: '⏱️ Normtider & Priser', icon: '⏱️' },
     { id: 'tilbud', label: '📄 Tilbud', icon: '📄' },
   ];
@@ -1902,6 +1904,20 @@ function IndstillingerSystem() {
   const updateNormtid = async (id, updates) => {
     await supabase.from('norm_times').update(updates).eq('id', id);
     setEditingNorm(null);
+    loadAllData();
+  };
+
+  const createNormtid = async (data) => {
+    const { error } = await supabase.from('norm_times').insert([data]);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setShowCreateNorm(false);
+    loadAllData();
+  };
+
+  const deleteNormtid = async (id, name) => {
+    if (!confirm(`Er du sikker på at du vil slette "${name}"?`)) return;
+    const { error } = await supabase.from('norm_times').delete().eq('id', id);
+    if (error) { alert('Fejl: ' + error.message); return; }
     loadAllData();
   };
 
@@ -2073,21 +2089,134 @@ function IndstillingerSystem() {
         </div>
       )}
 
+      {/* === KATEGORIER TAB === */}
+      {activeTab === 'kategorier' && (
+        <div style={STYLES.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div>
+              <h3 style={{ margin: 0 }}>Arbejdskategorier</h3>
+              <p style={{ color: COLORS.textLight, marginTop: 4, marginBottom: 0 }}>Kategorier til normtider og kalkulationsposter</p>
+            </div>
+            <button onClick={() => {
+              const name = prompt('Navn på ny kategori:');
+              if (!name) return;
+              supabase.from('work_categories').insert([{ name, sort_order: categories.length }]).then(() => loadAllData());
+            }} style={STYLES.primaryBtn}>+ Tilføj kategori</button>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Kategori</th>
+                <th style={STYLES.th}>Antal poster</th>
+                <th style={{ ...STYLES.th, width: 150 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map(c => (
+                <tr key={c.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                  <td style={STYLES.td}><strong>{c.name}</strong></td>
+                  <td style={STYLES.td}>{normtider.filter(n => n.category_id === c.id).length} poster</td>
+                  <td style={STYLES.td}>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button onClick={() => {
+                        const name = prompt('Nyt navn:', c.name);
+                        if (!name || name === c.name) return;
+                        supabase.from('work_categories').update({ name }).eq('id', c.id).then(() => loadAllData());
+                      }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', fontSize: 12 }}>Omdøb</button>
+                      <button onClick={async () => {
+                        const count = normtider.filter(n => n.category_id === c.id).length;
+                        if (count > 0) { alert(`Kan ikke slette - kategorien har ${count} poster`); return; }
+                        if (!confirm(`Slet kategorien "${c.name}"?`)) return;
+                        await supabase.from('work_categories').delete().eq('id', c.id);
+                        loadAllData();
+                      }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', fontSize: 12, color: COLORS.error }}>Slet</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* === NORMTIDER TAB === */}
       {activeTab === 'normtider' && (
         <div style={STYLES.card}>
-          <h3 style={{ margin: '0 0 20px' }}>Normtider & Materialpriser</h3>
-          <p style={{ color: COLORS.textLight, marginBottom: 16 }}>Rediger normtider, akkordminutter og materialepriser</p>
-          <div style={{ maxHeight: 600, overflow: 'auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div>
+              <h3 style={{ margin: 0 }}>Normtider & Kalkulationsposter</h3>
+              <p style={{ color: COLORS.textLight, marginTop: 4, marginBottom: 0 }}>Opret, rediger og slet kalkulationsposter</p>
+            </div>
+            <button onClick={() => setEditingNorm('new')} style={STYLES.primaryBtn}>+ Tilføj post</button>
+          </div>
+
+          {editingNorm === 'new' && (
+            <div style={{ background: COLORS.bg, padding: 20, borderRadius: 12, marginBottom: 20 }}>
+              <h4 style={{ margin: '0 0 16px' }}>Ny kalkulationspost</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={STYLES.label}>Kategori *</label>
+                  <select id="new-norm-cat" style={STYLES.select}>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={STYLES.label}>Navn *</label>
+                  <input id="new-norm-name" style={STYLES.input} placeholder="F.eks. Stikkontakt enkelt" />
+                </div>
+                <div>
+                  <label style={STYLES.label}>Enhed</label>
+                  <input id="new-norm-unit" style={STYLES.input} placeholder="stk" defaultValue="stk" />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 12 }}>
+                <div>
+                  <label style={STYLES.label}>Normminutter *</label>
+                  <input id="new-norm-min" type="number" style={STYLES.input} placeholder="45" />
+                </div>
+                <div>
+                  <label style={STYLES.label}>Akkordminutter</label>
+                  <input id="new-norm-akk" type="number" style={STYLES.input} placeholder="34" />
+                </div>
+                <div>
+                  <label style={STYLES.label}>Materialepris (kr)</label>
+                  <input id="new-norm-mat" type="number" style={STYLES.input} placeholder="150" />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+                <button onClick={() => setEditingNorm(null)} style={STYLES.secondaryBtn}>Annuller</button>
+                <button onClick={async () => {
+                  const name = document.getElementById('new-norm-name').value;
+                  const catId = document.getElementById('new-norm-cat').value;
+                  const normMin = document.getElementById('new-norm-min').value;
+                  if (!name || !catId || !normMin) { alert('Udfyld navn, kategori og normminutter'); return; }
+                  const { error } = await supabase.from('norm_times').insert([{
+                    name,
+                    category_id: catId,
+                    unit: document.getElementById('new-norm-unit').value || 'stk',
+                    norm_minutes: Number(normMin),
+                    akkord_minutes: Number(document.getElementById('new-norm-akk').value) || null,
+                    material_cost: Number(document.getElementById('new-norm-mat').value) || 0
+                  }]);
+                  if (error) { alert('Fejl: ' + error.message); return; }
+                  setEditingNorm(null);
+                  loadAllData();
+                }} style={STYLES.primaryBtn}>Gem ny post</button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ maxHeight: 500, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, background: 'white' }}>
                 <tr style={{ background: COLORS.bg }}>
                   <th style={STYLES.th}>Kategori</th>
                   <th style={STYLES.th}>Navn</th>
-                  <th style={{ ...STYLES.th, width: 80 }}>Normtid</th>
+                  <th style={STYLES.th}>Enhed</th>
+                  <th style={{ ...STYLES.th, width: 80 }}>Norm</th>
                   <th style={{ ...STYLES.th, width: 80 }}>Akkord</th>
                   <th style={{ ...STYLES.th, width: 100 }}>Materialer</th>
-                  <th style={{ ...STYLES.th, width: 80 }}></th>
+                  <th style={{ ...STYLES.th, width: 120 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -2095,34 +2224,57 @@ function IndstillingerSystem() {
                   <tr key={n.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
                     {editingNorm === n.id ? (
                       <>
-                        <td style={STYLES.td}><span style={{ fontSize: 11, color: COLORS.textLight }}>{n.work_categories?.name}</span></td>
-                        <td style={STYLES.td}>{n.name}</td>
                         <td style={STYLES.td}>
-                          <input type="number" defaultValue={n.norm_minutes} id={`norm-min-${n.id}`} style={{ ...STYLES.input, width: 70, padding: 6, fontSize: 13 }} /> min
+                          <select defaultValue={n.category_id} id={`norm-cat-${n.id}`} style={{ ...STYLES.select, padding: 6, fontSize: 12 }}>
+                            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
                         </td>
                         <td style={STYLES.td}>
-                          <input type="number" defaultValue={n.akkord_minutes} id={`norm-akk-${n.id}`} style={{ ...STYLES.input, width: 70, padding: 6, fontSize: 13 }} /> min
+                          <input type="text" defaultValue={n.name} id={`norm-name-${n.id}`} style={{ ...STYLES.input, padding: 6, fontSize: 12 }} />
                         </td>
                         <td style={STYLES.td}>
-                          <input type="number" defaultValue={n.material_cost} id={`norm-mat-${n.id}`} style={{ ...STYLES.input, width: 80, padding: 6, fontSize: 13 }} /> kr
+                          <input type="text" defaultValue={n.unit} id={`norm-unit-${n.id}`} style={{ ...STYLES.input, width: 50, padding: 6, fontSize: 12 }} />
                         </td>
                         <td style={STYLES.td}>
-                          <button onClick={() => updateNormtid(n.id, {
-                            norm_minutes: Number(document.getElementById(`norm-min-${n.id}`).value),
-                            akkord_minutes: Number(document.getElementById(`norm-akk-${n.id}`).value),
-                            material_cost: Number(document.getElementById(`norm-mat-${n.id}`).value)
-                          })} style={{ ...STYLES.primaryBtn, padding: '4px 10px', fontSize: 11 }}>Gem</button>
+                          <input type="number" defaultValue={n.norm_minutes} id={`norm-min-${n.id}`} style={{ ...STYLES.input, width: 60, padding: 6, fontSize: 12 }} />
+                        </td>
+                        <td style={STYLES.td}>
+                          <input type="number" defaultValue={n.akkord_minutes} id={`norm-akk-${n.id}`} style={{ ...STYLES.input, width: 60, padding: 6, fontSize: 12 }} />
+                        </td>
+                        <td style={STYLES.td}>
+                          <input type="number" defaultValue={n.material_cost} id={`norm-mat-${n.id}`} style={{ ...STYLES.input, width: 70, padding: 6, fontSize: 12 }} />
+                        </td>
+                        <td style={STYLES.td}>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button onClick={() => updateNormtid(n.id, {
+                              category_id: document.getElementById(`norm-cat-${n.id}`).value,
+                              name: document.getElementById(`norm-name-${n.id}`).value,
+                              unit: document.getElementById(`norm-unit-${n.id}`).value,
+                              norm_minutes: Number(document.getElementById(`norm-min-${n.id}`).value),
+                              akkord_minutes: Number(document.getElementById(`norm-akk-${n.id}`).value) || null,
+                              material_cost: Number(document.getElementById(`norm-mat-${n.id}`).value) || 0
+                            })} style={{ ...STYLES.primaryBtn, padding: '4px 8px', fontSize: 11 }}>Gem</button>
+                            <button onClick={() => setEditingNorm(null)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 11 }}>×</button>
+                          </div>
                         </td>
                       </>
                     ) : (
                       <>
                         <td style={STYLES.td}><span style={{ fontSize: 11, color: COLORS.textLight }}>{n.work_categories?.name}</span></td>
-                        <td style={STYLES.td}>{n.name}</td>
+                        <td style={STYLES.td}><strong>{n.name}</strong></td>
+                        <td style={STYLES.td}>{n.unit}</td>
                         <td style={STYLES.td}>{n.norm_minutes} min</td>
                         <td style={STYLES.td}>{n.akkord_minutes || '-'} min</td>
                         <td style={STYLES.td}>{formatMoney(n.material_cost || 0)}</td>
                         <td style={STYLES.td}>
-                          <button onClick={() => setEditingNorm(n.id)} style={{ ...STYLES.secondaryBtn, padding: '4px 10px', fontSize: 11 }}>Ret</button>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button onClick={() => setEditingNorm(n.id)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 11 }}>Ret</button>
+                            <button onClick={async () => {
+                              if (!confirm(`Slet "${n.name}"?`)) return;
+                              await supabase.from('norm_times').delete().eq('id', n.id);
+                              loadAllData();
+                            }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 11, color: COLORS.error }}>Slet</button>
+                          </div>
                         </td>
                       </>
                     )}
