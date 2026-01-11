@@ -106,8 +106,7 @@ export default function App() {
               {section === 'kunder' && <KunderSystem />}
               {section === 'tilbud' && <TilbudSystem />}
               {section === 'normtider' && <NormtiderSystem />}
-              {section === 'brugere' && hasPermission('brugere') && <BrugerSystem />}
-              {section === 'indstillinger' && hasPermission('indstillinger') && <IndstillingerSystem />}
+              {section === 'indstillinger' && profile?.role === 'admin' && <IndstillingerSystem />}
             </main>
           </>
         )}
@@ -203,15 +202,16 @@ function LoginPage() {
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function Navigation({ section, setSection }) {
-  const { profile, logout, hasPermission } = useAuth();
+  const { profile, logout } = useAuth();
+  const isAdmin = profile?.role === 'admin';
+  
   const menuItems = [
     { id: 'dashboard', label: 'Overblik', icon: '📊' },
     { id: 'projekter', label: 'Projekter', icon: '🔧' },
     { id: 'kunder', label: 'Kunder', icon: '👥' },
     { id: 'tilbud', label: 'Tilbud', icon: '📄' },
     { id: 'normtider', label: 'Normtider', icon: '⏱️' },
-    { id: 'brugere', label: 'Brugere', icon: '🔐', perm: 'brugere' },
-    { id: 'indstillinger', label: 'Indstillinger', icon: '⚙️', perm: 'indstillinger' },
+    { id: 'indstillinger', label: 'Indstillinger', icon: '⚙️', adminOnly: true },
   ];
 
   return (
@@ -223,7 +223,7 @@ function Navigation({ section, setSection }) {
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {menuItems.map(item => (
-            (!item.perm || hasPermission(item.perm)) && (
+            (!item.adminOnly || isAdmin) && (
               <button key={item.id} onClick={() => setSection(item.id)} style={{
                 background: section === item.id ? COLORS.primary : 'transparent',
                 color: section === item.id ? 'white' : COLORS.text,
@@ -235,7 +235,10 @@ function Navigation({ section, setSection }) {
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{ fontSize: 14, color: COLORS.textLight }}>{profile?.name || profile?.email}</span>
+          <span style={{ fontSize: 14, color: COLORS.textLight }}>
+            {profile?.name || profile?.email}
+            {isAdmin && <span style={{ marginLeft: 8, padding: '2px 8px', background: COLORS.primary, color: 'white', borderRadius: 4, fontSize: 10 }}>ADMIN</span>}
+          </span>
           <button onClick={logout} style={{ ...STYLES.secondaryBtn, padding: '8px 16px' }}>Log ud</button>
         </div>
       </div>
@@ -965,24 +968,142 @@ function KunderSystem() {
 }
 
 function KundeForm({ onSave, onCancel, initial = {} }) {
-  const [form, setForm] = useState({ name: '', company: '', email: '', phone: '', address: '', city: '', zip: '', cvr: '', ...initial });
+  const [kundeType, setKundeType] = useState(initial.customer_type || 'erhverv');
+  const [sameAddress, setSameAddress] = useState(true);
+  const [form, setForm] = useState({ 
+    customer_type: 'erhverv',
+    name: '', 
+    company: '', 
+    cvr: '',
+    email: '', 
+    phone: '', 
+    address: '', 
+    city: '', 
+    zip: '',
+    delivery_address: '',
+    delivery_city: '',
+    delivery_zip: '',
+    ...initial 
+  });
+
+  const handleTypeChange = (type) => {
+    setKundeType(type);
+    setForm({ ...form, customer_type: type });
+  };
+
+  const handleSave = () => {
+    if (kundeType === 'privat' && !form.name) return alert('Navn er påkrævet');
+    if (kundeType === 'erhverv' && (!form.name || !form.company)) return alert('Firma og kontaktperson er påkrævet');
+    
+    const saveData = {
+      ...form,
+      delivery_address: sameAddress ? form.address : form.delivery_address,
+      delivery_city: sameAddress ? form.city : form.delivery_city,
+      delivery_zip: sameAddress ? form.zip : form.delivery_zip,
+    };
+    onSave(saveData);
+  };
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <FormField label="Kontaktperson *" value={form.name} onChange={v => setForm({ ...form, name: v })} />
-      <FormField label="Firma" value={form.company} onChange={v => setForm({ ...form, company: v })} />
-      <FormField label="CVR" value={form.cvr} onChange={v => setForm({ ...form, cvr: v })} />
+      {/* Kundetype valg */}
+      <div>
+        <label style={STYLES.label}>Kundetype *</label>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button 
+            type="button"
+            onClick={() => handleTypeChange('privat')} 
+            style={{ 
+              ...STYLES.secondaryBtn, 
+              flex: 1,
+              background: kundeType === 'privat' ? COLORS.primary : 'white',
+              color: kundeType === 'privat' ? 'white' : COLORS.text
+            }}
+          >
+            🏠 Privat
+          </button>
+          <button 
+            type="button"
+            onClick={() => handleTypeChange('erhverv')} 
+            style={{ 
+              ...STYLES.secondaryBtn, 
+              flex: 1,
+              background: kundeType === 'erhverv' ? COLORS.primary : 'white',
+              color: kundeType === 'erhverv' ? 'white' : COLORS.text
+            }}
+          >
+            🏢 Erhverv
+          </button>
+        </div>
+      </div>
+
+      {/* Erhverv felter */}
+      {kundeType === 'erhverv' && (
+        <>
+          <FormField label="Firmanavn *" value={form.company} onChange={v => setForm({ ...form, company: v })} placeholder="Firma ApS" />
+          <FormField label="CVR" value={form.cvr} onChange={v => setForm({ ...form, cvr: v })} placeholder="12345678" />
+          <FormField label="Kontaktperson *" value={form.name} onChange={v => setForm({ ...form, name: v })} placeholder="Jens Jensen" />
+        </>
+      )}
+
+      {/* Privat felter */}
+      {kundeType === 'privat' && (
+        <FormField label="Fulde navn *" value={form.name} onChange={v => setForm({ ...form, name: v })} placeholder="Jens Jensen" />
+      )}
+
+      {/* Fælles kontaktinfo */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <FormField label="Email" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} />
-        <FormField label="Telefon" value={form.phone} onChange={v => setForm({ ...form, phone: v })} />
+        <FormField label="Email *" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} placeholder="email@eksempel.dk" />
+        <FormField label="Telefon *" value={form.phone} onChange={v => setForm({ ...form, phone: v })} placeholder="12345678" />
       </div>
-      <FormField label="Adresse" value={form.address} onChange={v => setForm({ ...form, address: v })} />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
-        <FormField label="Postnr" value={form.zip} onChange={v => setForm({ ...form, zip: v })} />
-        <FormField label="By" value={form.city} onChange={v => setForm({ ...form, city: v })} />
+
+      {/* Adresse */}
+      <div style={{ background: COLORS.bg, padding: 16, borderRadius: 12 }}>
+        <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
+          {kundeType === 'erhverv' ? '📍 Firmaadresse' : '📍 Adresse'}
+        </h4>
+        <FormField label="Adresse" value={form.address} onChange={v => setForm({ ...form, address: v })} placeholder="Vejnavn 123" />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginTop: 12 }}>
+          <FormField label="Postnr" value={form.zip} onChange={v => setForm({ ...form, zip: v })} placeholder="1234" />
+          <FormField label="By" value={form.city} onChange={v => setForm({ ...form, city: v })} placeholder="København" />
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 12 }}>
+
+      {/* Leveringsadresse */}
+      <div style={{ background: COLORS.bg, padding: 16, borderRadius: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>🚚 Leveringsadresse</h4>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
+            <input 
+              type="checkbox" 
+              checked={sameAddress} 
+              onChange={e => setSameAddress(e.target.checked)}
+              style={{ width: 18, height: 18 }}
+            />
+            Samme som {kundeType === 'erhverv' ? 'firmaadresse' : 'adresse'}
+          </label>
+        </div>
+        
+        {!sameAddress && (
+          <>
+            <FormField label="Leveringsadresse" value={form.delivery_address} onChange={v => setForm({ ...form, delivery_address: v })} placeholder="Vejnavn 123" />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginTop: 12 }}>
+              <FormField label="Postnr" value={form.delivery_zip} onChange={v => setForm({ ...form, delivery_zip: v })} placeholder="1234" />
+              <FormField label="By" value={form.delivery_city} onChange={v => setForm({ ...form, delivery_city: v })} placeholder="København" />
+            </div>
+          </>
+        )}
+        
+        {sameAddress && (
+          <p style={{ margin: 0, color: COLORS.textLight, fontSize: 13 }}>
+            ✓ Leveringsadresse er samme som {kundeType === 'erhverv' ? 'firmaadresse' : 'adresse'}
+          </p>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
-        <button onClick={() => form.name && onSave(form)} style={STYLES.primaryBtn}>Gem kunde</button>
+        <button onClick={handleSave} style={STYLES.primaryBtn}>Gem kunde</button>
       </div>
     </div>
   );
@@ -1671,17 +1792,51 @@ function NormtiderSystem() {
 // BRUGER SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-function BrugerSystem() {
-  const [brugere, setBrugere] = useState([]);
-  const [showCreate, setShowCreate] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(null);
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// INDSTILLINGER (KUN ADMIN) - KOMPLET ADMIN PANEL
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-  useEffect(() => { loadBrugere(); }, []);
-  const loadBrugere = async () => {
-    const { data } = await supabase.from('profiles').select('*').order('name');
-    setBrugere(data || []);
+function IndstillingerSystem() {
+  const [activeTab, setActiveTab] = useState('brugere');
+  const [brugere, setBrugere] = useState([]);
+  const [laborRates, setLaborRates] = useState([]);
+  const [normtider, setNormtider] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [companyInfo, setCompanyInfo] = useState({ name: 'Elta Solar', cvr: '', address: '', zip: '', city: '', phone: '', email: '' });
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [showEditUser, setShowEditUser] = useState(null);
+  const [showSuccess, setShowSuccess] = useState(null);
+  const [editingRate, setEditingRate] = useState(null);
+  const [editingNorm, setEditingNorm] = useState(null);
+
+  useEffect(() => { loadAllData(); }, []);
+
+  const loadAllData = async () => {
+    const [usersRes, laborRes, normRes, catRes, settingsRes] = await Promise.all([
+      supabase.from('profiles').select('*').order('name'),
+      supabase.from('labor_rates').select('*').order('name'),
+      supabase.from('norm_times').select('*, work_categories(name)').order('name'),
+      supabase.from('work_categories').select('*').order('sort_order'),
+      supabase.from('system_settings').select('*')
+    ]);
+    setBrugere(usersRes.data || []);
+    setLaborRates(laborRes.data || []);
+    setNormtider(normRes.data || []);
+    setCategories(catRes.data || []);
+    
+    const company = settingsRes.data?.find(s => s.key === 'company');
+    if (company?.value) setCompanyInfo(company.value);
   };
 
+  const tabs = [
+    { id: 'brugere', label: '👥 Brugere', icon: '👥' },
+    { id: 'firma', label: '🏢 Firma', icon: '🏢' },
+    { id: 'lonsatser', label: '💰 Lønsatser', icon: '💰' },
+    { id: 'normtider', label: '⏱️ Normtider & Priser', icon: '⏱️' },
+    { id: 'tilbud', label: '📄 Tilbud', icon: '📄' },
+  ];
+
+  // === BRUGER FUNKTIONER ===
   const generatePassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
     return Array(12).fill(0).map(() => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
@@ -1695,48 +1850,296 @@ function BrugerSystem() {
       options: { data: { name: form.name, role: form.role } }
     });
     if (error) { alert('Fejl: ' + error.message); return; }
-    setShowCreate(false);
+    
+    // Update profile with permissions
+    setTimeout(async () => {
+      await supabase.from('profiles').update({ 
+        permissions: form.permissions,
+        phone: form.phone,
+        title: form.title
+      }).eq('email', form.email);
+      loadAllData();
+    }, 1000);
+    
+    setShowCreateUser(false);
     setShowSuccess({ ...form, password: tempPassword });
-    loadBrugere();
+  };
+
+  const updateBruger = async (form) => {
+    const { error } = await supabase.from('profiles').update({
+      name: form.name,
+      role: form.role,
+      permissions: form.permissions,
+      phone: form.phone,
+      title: form.title,
+      active: form.active
+    }).eq('id', form.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    setShowEditUser(null);
+    loadAllData();
+  };
+
+  // === LØNSATS FUNKTIONER ===
+  const updateLaborRate = async (id, updates) => {
+    await supabase.from('labor_rates').update(updates).eq('id', id);
+    setEditingRate(null);
+    loadAllData();
+  };
+
+  // === NORMTID FUNKTIONER ===
+  const updateNormtid = async (id, updates) => {
+    await supabase.from('norm_times').update(updates).eq('id', id);
+    setEditingNorm(null);
+    loadAllData();
+  };
+
+  // === FIRMA FUNKTIONER ===
+  const saveCompanyInfo = async () => {
+    await supabase.from('system_settings').upsert({ 
+      key: 'company', 
+      value: companyInfo, 
+      updated_at: new Date().toISOString() 
+    });
+    alert('Firmainformation gemt!');
   };
 
   const rolleColors = { admin: '#DBEAFE', saelger: '#D1FAE5', montoer: '#FEF3C7', elev: '#F3E8FF' };
+  const rolleLabels = { admin: 'Administrator', saelger: 'Sælger', montoer: 'Montør', elev: 'Elev' };
 
   return (
     <div>
-      <PageHeader title="Brugerstyring" subtitle="Kun administrator kan oprette brugere" action={{ label: '+ Opret bruger', onClick: () => setShowCreate(true) }} />
+      <PageHeader title="Indstillinger" subtitle="Kun administratorer har adgang til denne sektion" />
 
-      <div style={{ ...STYLES.card, overflow: 'hidden', padding: 0 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ background: COLORS.bg }}>
-              <th style={STYLES.th}>Bruger</th>
-              <th style={STYLES.th}>Rolle</th>
-              <th style={STYLES.th}>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {brugere.map(b => (
-              <tr key={b.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                <td style={STYLES.td}>
-                  <div style={{ fontWeight: 600 }}>{b.name}</div>
-                  <div style={{ fontSize: 12, color: COLORS.textLight }}>{b.email}</div>
-                </td>
-                <td style={STYLES.td}>
-                  <span style={{ padding: '4px 12px', background: rolleColors[b.role] || COLORS.bg, borderRadius: 20, fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>
-                    {b.role}
-                  </span>
-                </td>
-                <td style={STYLES.td}><span style={{ color: COLORS.success }}>● Aktiv</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 24, flexWrap: 'wrap' }}>
+        {tabs.map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+            background: activeTab === tab.id ? COLORS.primary : 'white',
+            color: activeTab === tab.id ? 'white' : COLORS.text,
+            border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '10px 20px', fontWeight: 500, cursor: 'pointer'
+          }}>
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {showCreate && (
-        <Modal title="Opret ny bruger" onClose={() => setShowCreate(false)}>
-          <BrugerForm onSave={createBruger} onCancel={() => setShowCreate(false)} />
+      {/* === BRUGERE TAB === */}
+      {activeTab === 'brugere' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ margin: 0 }}>Brugerstyring</h3>
+            <button onClick={() => setShowCreateUser(true)} style={STYLES.primaryBtn}>+ Opret bruger</button>
+          </div>
+          
+          <div style={{ ...STYLES.card, overflow: 'hidden', padding: 0 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: COLORS.bg }}>
+                  <th style={STYLES.th}>Bruger</th>
+                  <th style={STYLES.th}>Rolle</th>
+                  <th style={STYLES.th}>Rettigheder</th>
+                  <th style={STYLES.th}>Status</th>
+                  <th style={STYLES.th}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {brugere.map(b => (
+                  <tr key={b.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={STYLES.td}>
+                      <div style={{ fontWeight: 600 }}>{b.name}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textLight }}>{b.email}</div>
+                      {b.title && <div style={{ fontSize: 11, color: COLORS.info }}>{b.title}</div>}
+                    </td>
+                    <td style={STYLES.td}>
+                      <span style={{ padding: '4px 12px', background: rolleColors[b.role] || COLORS.bg, borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
+                        {rolleLabels[b.role] || b.role}
+                      </span>
+                    </td>
+                    <td style={STYLES.td}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {(b.permissions || []).map(p => (
+                          <span key={p} style={{ padding: '2px 6px', background: COLORS.bg, borderRadius: 4, fontSize: 10 }}>{p}</span>
+                        ))}
+                        {(!b.permissions || b.permissions.length === 0) && b.role !== 'admin' && (
+                          <span style={{ fontSize: 12, color: COLORS.textLight }}>Ingen specielle</span>
+                        )}
+                        {b.role === 'admin' && (
+                          <span style={{ fontSize: 12, color: COLORS.success }}>Fuld adgang</span>
+                        )}
+                      </div>
+                    </td>
+                    <td style={STYLES.td}>
+                      <span style={{ color: b.active !== false ? COLORS.success : COLORS.error }}>
+                        {b.active !== false ? '● Aktiv' : '○ Inaktiv'}
+                      </span>
+                    </td>
+                    <td style={STYLES.td}>
+                      <button onClick={() => setShowEditUser(b)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', fontSize: 12 }}>Rediger</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* === FIRMA TAB === */}
+      {activeTab === 'firma' && (
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 20px' }}>Firmainformation</h3>
+          <div style={{ display: 'grid', gap: 16, maxWidth: 600 }}>
+            <FormField label="Firmanavn" value={companyInfo.name} onChange={v => setCompanyInfo({ ...companyInfo, name: v })} />
+            <FormField label="CVR" value={companyInfo.cvr} onChange={v => setCompanyInfo({ ...companyInfo, cvr: v })} />
+            <FormField label="Adresse" value={companyInfo.address} onChange={v => setCompanyInfo({ ...companyInfo, address: v })} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
+              <FormField label="Postnr" value={companyInfo.zip} onChange={v => setCompanyInfo({ ...companyInfo, zip: v })} />
+              <FormField label="By" value={companyInfo.city} onChange={v => setCompanyInfo({ ...companyInfo, city: v })} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <FormField label="Telefon" value={companyInfo.phone} onChange={v => setCompanyInfo({ ...companyInfo, phone: v })} />
+              <FormField label="Email" value={companyInfo.email} onChange={v => setCompanyInfo({ ...companyInfo, email: v })} />
+            </div>
+            <button onClick={saveCompanyInfo} style={STYLES.primaryBtn}>Gem firmainformation</button>
+          </div>
+        </div>
+      )}
+
+      {/* === LØNSATSER TAB === */}
+      {activeTab === 'lonsatser' && (
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 20px' }}>Lønsatser</h3>
+          <p style={{ color: COLORS.textLight, marginBottom: 16 }}>Klik på en række for at redigere</p>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Type</th>
+                <th style={STYLES.th}>Kostpris/time</th>
+                <th style={STYLES.th}>Salgspris/time</th>
+                <th style={STYLES.th}>Akkordsats/time</th>
+                <th style={STYLES.th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {laborRates.map(r => (
+                <tr key={r.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                  {editingRate === r.id ? (
+                    <>
+                      <td style={STYLES.td}><strong>{r.name}</strong></td>
+                      <td style={STYLES.td}>
+                        <input type="number" defaultValue={r.hourly_rate} id={`rate-cost-${r.id}`} style={{ ...STYLES.input, width: 100, padding: 8 }} />
+                      </td>
+                      <td style={STYLES.td}>
+                        <input type="number" defaultValue={r.hourly_rate_sale} id={`rate-sale-${r.id}`} style={{ ...STYLES.input, width: 100, padding: 8 }} />
+                      </td>
+                      <td style={STYLES.td}>
+                        <input type="number" defaultValue={r.akkord_rate} id={`rate-akkord-${r.id}`} style={{ ...STYLES.input, width: 100, padding: 8 }} />
+                      </td>
+                      <td style={STYLES.td}>
+                        <button onClick={() => updateLaborRate(r.id, {
+                          hourly_rate: Number(document.getElementById(`rate-cost-${r.id}`).value),
+                          hourly_rate_sale: Number(document.getElementById(`rate-sale-${r.id}`).value),
+                          akkord_rate: Number(document.getElementById(`rate-akkord-${r.id}`).value)
+                        })} style={{ ...STYLES.primaryBtn, padding: '6px 12px', fontSize: 12 }}>Gem</button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td style={STYLES.td}><strong>{r.name}</strong></td>
+                      <td style={STYLES.td}>{formatMoney(r.hourly_rate)}</td>
+                      <td style={STYLES.td}>{formatMoney(r.hourly_rate_sale)}</td>
+                      <td style={STYLES.td}>{formatMoney(r.akkord_rate)}</td>
+                      <td style={STYLES.td}>
+                        <button onClick={() => setEditingRate(r.id)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', fontSize: 12 }}>Rediger</button>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* === NORMTIDER TAB === */}
+      {activeTab === 'normtider' && (
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 20px' }}>Normtider & Materialpriser</h3>
+          <p style={{ color: COLORS.textLight, marginBottom: 16 }}>Rediger normtider, akkordminutter og materialepriser</p>
+          <div style={{ maxHeight: 600, overflow: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'white' }}>
+                <tr style={{ background: COLORS.bg }}>
+                  <th style={STYLES.th}>Kategori</th>
+                  <th style={STYLES.th}>Navn</th>
+                  <th style={{ ...STYLES.th, width: 80 }}>Normtid</th>
+                  <th style={{ ...STYLES.th, width: 80 }}>Akkord</th>
+                  <th style={{ ...STYLES.th, width: 100 }}>Materialer</th>
+                  <th style={{ ...STYLES.th, width: 80 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {normtider.map(n => (
+                  <tr key={n.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    {editingNorm === n.id ? (
+                      <>
+                        <td style={STYLES.td}><span style={{ fontSize: 11, color: COLORS.textLight }}>{n.work_categories?.name}</span></td>
+                        <td style={STYLES.td}>{n.name}</td>
+                        <td style={STYLES.td}>
+                          <input type="number" defaultValue={n.norm_minutes} id={`norm-min-${n.id}`} style={{ ...STYLES.input, width: 70, padding: 6, fontSize: 13 }} /> min
+                        </td>
+                        <td style={STYLES.td}>
+                          <input type="number" defaultValue={n.akkord_minutes} id={`norm-akk-${n.id}`} style={{ ...STYLES.input, width: 70, padding: 6, fontSize: 13 }} /> min
+                        </td>
+                        <td style={STYLES.td}>
+                          <input type="number" defaultValue={n.material_cost} id={`norm-mat-${n.id}`} style={{ ...STYLES.input, width: 80, padding: 6, fontSize: 13 }} /> kr
+                        </td>
+                        <td style={STYLES.td}>
+                          <button onClick={() => updateNormtid(n.id, {
+                            norm_minutes: Number(document.getElementById(`norm-min-${n.id}`).value),
+                            akkord_minutes: Number(document.getElementById(`norm-akk-${n.id}`).value),
+                            material_cost: Number(document.getElementById(`norm-mat-${n.id}`).value)
+                          })} style={{ ...STYLES.primaryBtn, padding: '4px 10px', fontSize: 11 }}>Gem</button>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={STYLES.td}><span style={{ fontSize: 11, color: COLORS.textLight }}>{n.work_categories?.name}</span></td>
+                        <td style={STYLES.td}>{n.name}</td>
+                        <td style={STYLES.td}>{n.norm_minutes} min</td>
+                        <td style={STYLES.td}>{n.akkord_minutes || '-'} min</td>
+                        <td style={STYLES.td}>{formatMoney(n.material_cost || 0)}</td>
+                        <td style={STYLES.td}>
+                          <button onClick={() => setEditingNorm(n.id)} style={{ ...STYLES.secondaryBtn, padding: '4px 10px', fontSize: 11 }}>Ret</button>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* === TILBUD TAB === */}
+      {activeTab === 'tilbud' && (
+        <div style={STYLES.card}>
+          <h3 style={{ margin: '0 0 20px' }}>Tilbudsindstillinger</h3>
+          <p style={{ color: COLORS.textLight }}>Standard tilbudsvilkår, skabeloner og gyldighed kommer her.</p>
+        </div>
+      )}
+
+      {/* === MODALS === */}
+      {showCreateUser && (
+        <Modal title="Opret ny bruger" onClose={() => setShowCreateUser(false)} wide>
+          <BrugerFormFull onSave={createBruger} onCancel={() => setShowCreateUser(false)} />
+        </Modal>
+      )}
+
+      {showEditUser && (
+        <Modal title="Rediger bruger" onClose={() => setShowEditUser(null)} wide>
+          <BrugerFormFull initial={showEditUser} onSave={updateBruger} onCancel={() => setShowEditUser(null)} isEdit />
         </Modal>
       )}
 
@@ -1762,111 +2165,116 @@ function BrugerSystem() {
   );
 }
 
-function BrugerForm({ onSave, onCancel }) {
-  const [form, setForm] = useState({ name: '', email: '', role: 'saelger' });
+// Bruger form med rettigheder
+function BrugerFormFull({ onSave, onCancel, initial = {}, isEdit = false }) {
+  const [form, setForm] = useState({
+    id: initial.id || null,
+    name: initial.name || '',
+    email: initial.email || '',
+    phone: initial.phone || '',
+    title: initial.title || '',
+    role: initial.role || 'saelger',
+    permissions: initial.permissions || [],
+    active: initial.active !== false
+  });
+
+  const allPermissions = [
+    { id: 'projekter_se', label: 'Se projekter', group: 'Projekter' },
+    { id: 'projekter_opret', label: 'Oprette projekter', group: 'Projekter' },
+    { id: 'projekter_rediger', label: 'Redigere projekter', group: 'Projekter' },
+    { id: 'projekter_slet', label: 'Slette projekter', group: 'Projekter' },
+    { id: 'kunder_se', label: 'Se kunder', group: 'Kunder' },
+    { id: 'kunder_opret', label: 'Oprette kunder', group: 'Kunder' },
+    { id: 'kunder_rediger', label: 'Redigere kunder', group: 'Kunder' },
+    { id: 'tilbud_se', label: 'Se tilbud', group: 'Tilbud' },
+    { id: 'tilbud_opret', label: 'Oprette tilbud', group: 'Tilbud' },
+    { id: 'tilbud_send', label: 'Sende tilbud', group: 'Tilbud' },
+    { id: 'priser_se', label: 'Se priser og DB', group: 'Økonomi' },
+    { id: 'akkord_se', label: 'Se akkord', group: 'Økonomi' },
+  ];
+
+  const togglePermission = (permId) => {
+    if (form.permissions.includes(permId)) {
+      setForm({ ...form, permissions: form.permissions.filter(p => p !== permId) });
+    } else {
+      setForm({ ...form, permissions: [...form.permissions, permId] });
+    }
+  };
+
+  const permissionGroups = [...new Set(allPermissions.map(p => p.group))];
+
   return (
-    <div style={{ display: 'grid', gap: 16 }}>
-      <FormField label="Fulde navn *" value={form.name} onChange={v => setForm({ ...form, name: v })} />
-      <FormField label="Email *" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} />
+    <div style={{ display: 'grid', gap: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <FormField label="Fulde navn *" value={form.name} onChange={v => setForm({ ...form, name: v })} />
+        <FormField label="Titel" value={form.title} onChange={v => setForm({ ...form, title: v })} placeholder="F.eks. Salgschef" />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <FormField label="Email *" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} disabled={isEdit} />
+        <FormField label="Telefon" value={form.phone} onChange={v => setForm({ ...form, phone: v })} />
+      </div>
+      
       <div>
         <label style={STYLES.label}>Rolle</label>
         <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={STYLES.select}>
           <option value="saelger">Sælger</option>
           <option value="montoer">Montør</option>
           <option value="elev">Elev</option>
-          <option value="admin">Administrator</option>
+          <option value="admin">Administrator (Fuld adgang)</option>
         </select>
       </div>
-      <div style={{ display: 'flex', gap: 12 }}>
+
+      {form.role !== 'admin' && (
+        <div style={{ background: COLORS.bg, padding: 20, borderRadius: 12 }}>
+          <h4 style={{ margin: '0 0 16px', fontSize: 14 }}>🔐 Rettigheder</h4>
+          <p style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 16 }}>Vælg hvad denne bruger må se og gøre i systemet</p>
+          
+          {permissionGroups.map(group => (
+            <div key={group} style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: COLORS.text }}>{group}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {allPermissions.filter(p => p.group === group).map(perm => (
+                  <label key={perm.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={form.permissions.includes(perm.id)}
+                      onChange={() => togglePermission(perm.id)}
+                      style={{ width: 16, height: 16 }}
+                    />
+                    {perm.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {form.role === 'admin' && (
+        <Alert type="info">Administratorer har automatisk fuld adgang til alle funktioner.</Alert>
+      )}
+
+      {isEdit && (
+        <div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={form.active}
+              onChange={e => setForm({ ...form, active: e.target.checked })}
+              style={{ width: 18, height: 18 }}
+            />
+            <span style={{ fontWeight: 500 }}>Bruger er aktiv</span>
+          </label>
+          <p style={{ fontSize: 12, color: COLORS.textLight, marginTop: 4 }}>Inaktive brugere kan ikke logge ind</p>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
-        <button onClick={() => form.name && form.email && onSave(form)} style={STYLES.primaryBtn}>Opret bruger</button>
+        <button onClick={() => form.name && form.email && onSave(form)} style={STYLES.primaryBtn}>
+          {isEdit ? 'Gem ændringer' : 'Opret bruger'}
+        </button>
       </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// INDSTILLINGER
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-
-function IndstillingerSystem() {
-  const [settings, setSettings] = useState({});
-  const [laborRates, setLaborRates] = useState([]);
-  const [activeTab, setActiveTab] = useState('firma');
-
-  useEffect(() => { loadData(); }, []);
-
-  const loadData = async () => {
-    const [settingsRes, laborRes] = await Promise.all([
-      supabase.from('system_settings').select('*'),
-      supabase.from('labor_rates').select('*').order('name')
-    ]);
-    const s = {};
-    (settingsRes.data || []).forEach(row => s[row.key] = row.value);
-    setSettings(s);
-    setLaborRates(laborRes.data || []);
-  };
-
-  const updateSetting = async (key, value) => {
-    await supabase.from('system_settings').upsert({ key, value, updated_at: new Date().toISOString() });
-    setSettings({ ...settings, [key]: value });
-  };
-
-  return (
-    <div>
-      <PageHeader title="Indstillinger" subtitle="Konfigurer systemet" />
-
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
-        {[{ id: 'firma', label: '🏢 Firma' }, { id: 'lonsatser', label: '💰 Lønsatser' }, { id: 'tilbud', label: '📄 Tilbud' }].map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
-            background: activeTab === tab.id ? COLORS.primary : 'white',
-            color: activeTab === tab.id ? 'white' : COLORS.text,
-            border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '10px 20px', fontWeight: 500, cursor: 'pointer'
-          }}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'firma' && (
-        <div style={STYLES.card}>
-          <h3 style={{ margin: '0 0 16px' }}>Firmainformation</h3>
-          <p style={{ color: COLORS.textLight }}>Kommer snart...</p>
-        </div>
-      )}
-
-      {activeTab === 'lonsatser' && (
-        <div style={STYLES.card}>
-          <h3 style={{ margin: '0 0 16px' }}>Lønsatser</h3>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: COLORS.bg }}>
-                <th style={STYLES.th}>Type</th>
-                <th style={STYLES.th}>Kostpris/time</th>
-                <th style={STYLES.th}>Salgspris/time</th>
-                <th style={STYLES.th}>Akkordsats</th>
-              </tr>
-            </thead>
-            <tbody>
-              {laborRates.map(r => (
-                <tr key={r.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
-                  <td style={STYLES.td}><strong>{r.name}</strong></td>
-                  <td style={STYLES.td}>{formatMoney(r.hourly_rate)}</td>
-                  <td style={STYLES.td}>{formatMoney(r.hourly_rate_sale)}</td>
-                  <td style={STYLES.td}>{formatMoney(r.akkord_rate)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {activeTab === 'tilbud' && (
-        <div style={STYLES.card}>
-          <h3 style={{ margin: '0 0 16px' }}>Tilbudsindstillinger</h3>
-          <p style={{ color: COLORS.textLight }}>Kommer snart...</p>
-        </div>
-      )}
     </div>
   );
 }
@@ -1947,14 +2355,14 @@ function LoadingIndicator() {
   return <div style={{ textAlign: 'center', padding: 40, color: COLORS.textLight }}>Indlæser...</div>;
 }
 
-function FormField({ label, value, onChange, type = 'text', placeholder, multiline }) {
+function FormField({ label, value, onChange, type = 'text', placeholder, multiline, disabled }) {
   return (
     <div style={{ marginBottom: 16 }}>
       <label style={STYLES.label}>{label}</label>
       {multiline ? (
-        <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={{ ...STYLES.input, minHeight: 80, resize: 'vertical' }} />
+        <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} disabled={disabled} style={{ ...STYLES.input, minHeight: 80, resize: 'vertical', opacity: disabled ? 0.6 : 1 }} />
       ) : (
-        <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={STYLES.input} />
+        <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} disabled={disabled} style={{ ...STYLES.input, opacity: disabled ? 0.6 : 1, cursor: disabled ? 'not-allowed' : 'text' }} />
       )}
     </div>
   );
