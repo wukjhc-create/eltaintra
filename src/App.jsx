@@ -740,6 +740,8 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
 
   // Rettigheder: admin, sælger og serviceleder har skriveadgang
   const canManage = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+  // Kun admin og sælger kan acceptere tilbud
+  const canAccept = profile?.role === 'admin' || profile?.role === 'saelger';
 
   useEffect(() => { loadData(); }, []);
 
@@ -1050,6 +1052,133 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     loadTilbud(selectedProjekt.id);
   };
 
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+  // TILBUD VERSIONERING & STATUS
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+
+  // Check om tilbud kan redigeres
+  const canEditTilbud = (t) => {
+    if (!t) return false;
+    return t.status === 'kladde' && !t.is_locked;
+  };
+
+  // Marker tilbud som sendt
+  const sendTilbud = async (t) => {
+    if (!confirm(`Marker "${t.title}" som sendt?\n\nTilbuddet vil blive låst for redigering.`)) return;
+    
+    const { error } = await supabase.from('quotes').update({
+      status: 'sendt',
+      is_locked: true,
+      sent_at: new Date().toISOString(),
+      sent_by: user?.id,
+      updated_at: new Date().toISOString()
+    }).eq('id', t.id);
+    
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadTilbud(selectedProjekt.id);
+    if (selectedTilbud?.id === t.id) {
+      setSelectedTilbud({ ...selectedTilbud, status: 'sendt', is_locked: true });
+    }
+  };
+
+  // Marker tilbud som accepteret
+  const acceptTilbud = async (t) => {
+    // Check om der allerede er et accepteret tilbud på projektet
+    const { data: existing } = await supabase
+      .from('quotes')
+      .select('id, title, version')
+      .eq('project_id', selectedProjekt.id)
+      .eq('status', 'accepteret')
+      .neq('id', t.id);
+    
+    if (existing && existing.length > 0) {
+      alert(`Der er allerede et accepteret tilbud på dette projekt:\n"${existing[0].title}" (v${existing[0].version})\n\nKun ét tilbud kan være accepteret ad gangen.`);
+      return;
+    }
+    
+    if (!confirm(`Marker "${t.title}" som accepteret af kunden?`)) return;
+    
+    const { error } = await supabase.from('quotes').update({
+      status: 'accepteret',
+      is_locked: true,
+      accepted_at: new Date().toISOString(),
+      accepted_by: user?.id,
+      updated_at: new Date().toISOString()
+    }).eq('id', t.id);
+    
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadTilbud(selectedProjekt.id);
+    if (selectedTilbud?.id === t.id) {
+      setSelectedTilbud({ ...selectedTilbud, status: 'accepteret', is_locked: true });
+    }
+  };
+
+  // Marker tilbud som afvist
+  const afvisTilbud = async (t) => {
+    if (!confirm(`Marker "${t.title}" som afvist?`)) return;
+    
+    const { error } = await supabase.from('quotes').update({
+      status: 'afvist',
+      is_locked: true,
+      updated_at: new Date().toISOString()
+    }).eq('id', t.id);
+    
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadTilbud(selectedProjekt.id);
+    if (selectedTilbud?.id === t.id) {
+      setSelectedTilbud({ ...selectedTilbud, status: 'afvist', is_locked: true });
+    }
+  };
+
+  // Kopiér tilbud til ny version
+  const kopierTilbud = async (t) => {
+    // Find højeste version for dette tilbud (via parent_quote_id eller samme id)
+    const rootId = t.parent_quote_id || t.id;
+    const { data: versions } = await supabase
+      .from('quotes')
+      .select('version')
+      .or(`id.eq.${rootId},parent_quote_id.eq.${rootId}`)
+      .order('version', { ascending: false })
+      .limit(1);
+    
+    const newVersion = versions && versions.length > 0 ? versions[0].version + 1 : (t.version || 1) + 1;
+    
+    // Opret nyt tilbud
+    const { data: newQuote, error: quoteError } = await supabase.from('quotes').insert([{
+      project_id: t.project_id,
+      title: t.title,
+      description: t.description,
+      total_price: t.total_price,
+      status: 'kladde',
+      show_lines: t.show_lines,
+      version: newVersion,
+      parent_quote_id: rootId,
+      is_locked: false
+    }]).select();
+    
+    if (quoteError) { alert('Fejl ved kopiering: ' + quoteError.message); return; }
+    
+    // Kopiér linjer
+    const { data: linjer } = await supabase.from('quote_lines').select('*').eq('quote_id', t.id);
+    if (linjer && linjer.length > 0) {
+      const newLinjer = linjer.map(l => ({
+        quote_id: newQuote[0].id,
+        product_id: l.product_id,
+        type: l.type,
+        title: l.title,
+        quantity: l.quantity,
+        cost_price: l.cost_price,
+        sale_price: l.sale_price,
+        show_on_quote: l.show_on_quote,
+        sort_order: l.sort_order
+      }));
+      await supabase.from('quote_lines').insert(newLinjer);
+    }
+    
+    loadTilbud(selectedProjekt.id);
+    alert(`Ny version (v${newVersion}) oprettet som kladde.\n\nDu kan nu redigere det nye tilbud.`);
+  };
+
   // Beregninger
   const calcTilbudTotals = (linjer) => {
     const totalKost = linjer.reduce((sum, l) => sum + (l.quantity * l.cost_price), 0);
@@ -1323,13 +1452,42 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     const totals = calcTilbudTotals(tilbudLinjer);
     const marginColor = getMarginColor(totals.dbPct);
     const underMinimum = isUnderMinimum(totals.dbPct);
+    const isLocked = selectedTilbud.is_locked || selectedTilbud.status !== 'kladde';
+    const canEdit = canEditTilbud(selectedTilbud);
     
     return (
       <div>
         <button onClick={() => setSelectedTilbud(null)} style={{ ...STYLES.secondaryBtn, marginBottom: 24 }}>← Tilbage til projekt</button>
         
+        {/* Låst advarsel */}
+        {isLocked && canManage && (
+          <div style={{ 
+            background: '#EFF6FF', 
+            border: '1px solid #BFDBFE', 
+            borderRadius: 8, 
+            padding: 16, 
+            marginBottom: 24,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12
+          }}>
+            <span style={{ fontSize: 24 }}>🔒</span>
+            <div>
+              <div style={{ fontWeight: 600, color: '#1D4ED8' }}>Dette tilbud er låst for redigering</div>
+              <div style={{ fontSize: 13, color: '#3B82F6' }}>
+                Status: {tilbudStatusLabels[selectedTilbud.status]} 
+                {selectedTilbud.sent_at && ` • Sendt: ${new Date(selectedTilbud.sent_at).toLocaleDateString('da-DK')}`}
+                {selectedTilbud.accepted_at && ` • Accepteret: ${new Date(selectedTilbud.accepted_at).toLocaleDateString('da-DK')}`}
+              </div>
+            </div>
+            <div style={{ marginLeft: 'auto' }}>
+              <button onClick={() => kopierTilbud(selectedTilbud)} style={STYLES.primaryBtn}>📋 Kopiér til ny version</button>
+            </div>
+          </div>
+        )}
+        
         {/* Advarsel hvis under minimum */}
-        {canManage && underMinimum && (
+        {canManage && underMinimum && !isLocked && (
           <div style={{ 
             background: '#FEE2E2', 
             border: '1px solid #FECACA', 
@@ -1353,22 +1511,47 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
         <div style={{ ...STYLES.card, marginBottom: 24 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
-              <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{selectedTilbud.title}</h1>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{selectedTilbud.title}</h1>
+                <span style={{ 
+                  padding: '4px 10px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+                  background: '#F3F4F6', color: '#6B7280'
+                }}>v{selectedTilbud.version || 1}</span>
+              </div>
               <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ 
                   padding: '4px 12px', borderRadius: 4, fontSize: 12, fontWeight: 600,
                   background: tilbudStatusColors[selectedTilbud.status]?.bg,
                   color: tilbudStatusColors[selectedTilbud.status]?.color
                 }}>{tilbudStatusLabels[selectedTilbud.status]}</span>
+                {isLocked && <span style={{ fontSize: 12, color: COLORS.textLight }}>🔒 Låst</span>}
                 <span style={{ fontSize: 13, color: COLORS.textLight }}>Projekt: {selectedProjekt.name}</span>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => downloadTilbudPDF(selectedTilbud)} style={STYLES.secondaryBtn}>📄 Download PDF</button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <button onClick={() => downloadTilbudPDF(selectedTilbud)} style={STYLES.secondaryBtn}>📄 PDF</button>
               {canManage && (
                 <>
-                  <button onClick={() => { setEditingTilbud(selectedTilbud); setShowTilbudModal(true); }} style={STYLES.secondaryBtn}>Rediger info</button>
-                  <button onClick={() => deleteTilbud(selectedTilbud)} style={{ ...STYLES.secondaryBtn, color: COLORS.error }}>Slet</button>
+                  {/* Status-handlinger */}
+                  {selectedTilbud.status === 'kladde' && (
+                    <button onClick={() => sendTilbud(selectedTilbud)} style={{ ...STYLES.primaryBtn, background: '#3B82F6' }}>📤 Send</button>
+                  )}
+                  {selectedTilbud.status === 'sendt' && canAccept && (
+                    <>
+                      <button onClick={() => acceptTilbud(selectedTilbud)} style={{ ...STYLES.primaryBtn, background: '#059669' }}>✅ Acceptér</button>
+                      <button onClick={() => afvisTilbud(selectedTilbud)} style={{ ...STYLES.secondaryBtn, color: '#DC2626' }}>❌ Afvis</button>
+                    </>
+                  )}
+                  {/* Kopiér (altid tilgængelig) */}
+                  <button onClick={() => kopierTilbud(selectedTilbud)} style={STYLES.secondaryBtn}>📋 Kopiér</button>
+                  {/* Rediger (kun kladde) */}
+                  {canEdit && (
+                    <button onClick={() => { setEditingTilbud(selectedTilbud); setShowTilbudModal(true); }} style={STYLES.secondaryBtn}>✏️ Rediger</button>
+                  )}
+                  {/* Slet (kun kladde) */}
+                  {canEdit && (
+                    <button onClick={() => deleteTilbud(selectedTilbud)} style={{ ...STYLES.secondaryBtn, color: COLORS.error }}>🗑️ Slet</button>
+                  )}
                 </>
               )}
             </div>
@@ -1407,8 +1590,8 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
           </div>
         )}
 
-        {/* Vis linjer toggle */}
-        {canManage && (
+        {/* Vis linjer toggle - kun for kladde */}
+        {canManage && canEdit && (
           <div style={{ ...STYLES.card, marginBottom: 24, padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <strong>Vis linjer på PDF til kunde</strong>
@@ -1424,7 +1607,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
         {/* Linjer */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Linjer ({tilbudLinjer.length})</h2>
-          {canManage && (
+          {canManage && canEdit && (
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowProduktVaelger(true)} style={STYLES.secondaryBtn}>🏷️ Fra katalog</button>
               <button onClick={() => setShowPakkeVaelger(true)} style={STYLES.secondaryBtn}>📦 Indsæt pakke</button>
@@ -1449,7 +1632,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
                 <th style={{ ...STYLES.th, textAlign: 'right' }}>Total</th>
                 {canManage && <th style={{ ...STYLES.th, textAlign: 'right' }}>DB %</th>}
                 <th style={{ ...STYLES.th, textAlign: 'center' }}>Vis</th>
-                {canManage && <th style={STYLES.th}></th>}
+                {canManage && canEdit && <th style={STYLES.th}></th>}
               </tr></thead>
               <tbody>
                 {tilbudLinjer.map(l => {
@@ -1482,7 +1665,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
                         </td>
                       )}
                       <td style={{ ...STYLES.td, textAlign: 'center' }}>{l.show_on_quote ? '✓' : '–'}</td>
-                      {canManage && (
+                      {canManage && canEdit && (
                         <td style={STYLES.td}>
                           <div style={{ display: 'flex', gap: 4 }}>
                             <button onClick={() => { setEditingLinje(l); setShowLinjeModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>Ret</button>
@@ -1704,24 +1887,32 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
               {tilbud.map(t => (
                 <div key={t.id} style={{ 
                   padding: 16,
-                  background: COLORS.bg,
+                  background: t.status === 'accepteret' ? '#F0FDF4' : COLORS.bg,
                   borderRadius: 8,
-                  border: `1px solid ${COLORS.border}`,
+                  border: `1px solid ${t.status === 'accepteret' ? '#86EFAC' : COLORS.border}`,
                   cursor: 'pointer'
                 }} onClick={() => setSelectedTilbud(t)}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: 16, color: COLORS.primary }}>{t.title}</div>
-                      <span style={{ 
-                        display: 'inline-block',
-                        padding: '2px 8px', 
-                        borderRadius: 4, 
-                        fontSize: 11, 
-                        fontWeight: 600,
-                        marginTop: 4,
-                        background: tilbudStatusColors[t.status]?.bg,
-                        color: tilbudStatusColors[t.status]?.color
-                      }}>{tilbudStatusLabels[t.status]}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 600, fontSize: 16, color: COLORS.primary }}>{t.title}</span>
+                        <span style={{ 
+                          padding: '2px 6px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                          background: '#F3F4F6', color: '#6B7280'
+                        }}>v{t.version || 1}</span>
+                        {t.is_locked && <span style={{ fontSize: 12 }}>🔒</span>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                        <span style={{ 
+                          padding: '2px 8px', 
+                          borderRadius: 4, 
+                          fontSize: 11, 
+                          fontWeight: 600,
+                          background: tilbudStatusColors[t.status]?.bg,
+                          color: tilbudStatusColors[t.status]?.color
+                        }}>{tilbudStatusLabels[t.status]}</span>
+                        {t.status === 'accepteret' && <span style={{ fontSize: 12 }}>✅</span>}
+                      </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: 18, fontWeight: 700, color: COLORS.primary }}>
