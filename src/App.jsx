@@ -1,15 +1,10 @@
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 // ELTASOLAR FUNDAMENT v1.1
-// Scope: Login, Roller, Admin, Brugere, Kunder, Projekter
-// CRUD virker 100%
+// Original layout bevaret - kun funktionelle rettelser
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { createClient } from '@supabase/supabase-js';
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// SUPABASE CLIENT
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 const supabase = createClient(
   'https://fsziiscbfdduuuhfpfet.supabase.co',
@@ -17,79 +12,25 @@ const supabase = createClient(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// STYLES
+// STYLES (Original)
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 const COLORS = {
-  primary: '#2E7D32',
-  primaryDark: '#1B5E20',
-  bg: '#F8FAFC',
-  card: '#FFFFFF',
-  text: '#1E293B',
-  textLight: '#64748B',
-  border: '#E2E8F0',
-  success: '#10B981',
-  error: '#EF4444',
+  primary: '#2E7D32', primaryDark: '#1B5E20', primaryLight: '#4CAF50',
+  accent: '#F5A623', accentDark: '#E09000',
+  bg: '#F8FAFC', card: '#FFFFFF', text: '#1E293B', textLight: '#64748B', border: '#E2E8F0',
+  success: '#10B981', warning: '#F59E0B', error: '#EF4444', info: '#3B82F6',
 };
 
 const STYLES = {
-  input: { 
-    width: '100%', 
-    padding: '12px 16px', 
-    border: `1px solid ${COLORS.border}`, 
-    borderRadius: 8, 
-    fontSize: 15, 
-    boxSizing: 'border-box' 
-  },
-  select: { 
-    width: '100%', 
-    padding: '12px 16px', 
-    border: `1px solid ${COLORS.border}`, 
-    borderRadius: 8, 
-    fontSize: 15, 
-    boxSizing: 'border-box',
-    background: 'white'
-  },
-  primaryBtn: { 
-    background: COLORS.primary, 
-    color: 'white', 
-    border: 'none', 
-    borderRadius: 8, 
-    padding: '12px 24px', 
-    fontWeight: 600, 
-    cursor: 'pointer', 
-    fontSize: 14 
-  },
-  secondaryBtn: { 
-    background: 'white', 
-    color: COLORS.text, 
-    border: `1px solid ${COLORS.border}`, 
-    borderRadius: 8, 
-    padding: '12px 24px', 
-    fontWeight: 600, 
-    cursor: 'pointer', 
-    fontSize: 14 
-  },
-  card: { 
-    background: 'white', 
-    borderRadius: 12, 
-    padding: 24, 
-    border: `1px solid ${COLORS.border}` 
-  },
-  th: { 
-    textAlign: 'left', 
-    padding: '12px 16px', 
-    fontSize: 12, 
-    fontWeight: 600, 
-    color: COLORS.textLight, 
-    textTransform: 'uppercase',
-    background: COLORS.bg
-  },
-  td: { 
-    padding: '16px', 
-    fontSize: 14,
-    borderTop: `1px solid ${COLORS.border}`
-  },
+  label: { display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14, color: COLORS.text },
+  input: { width: '100%', padding: '12px 16px', border: `1px solid ${COLORS.border}`, borderRadius: 12, fontSize: 15, boxSizing: 'border-box' },
+  select: { width: '100%', padding: '12px 16px', border: `1px solid ${COLORS.border}`, borderRadius: 12, fontSize: 15, boxSizing: 'border-box', background: 'white' },
+  primaryBtn: { background: COLORS.primary, color: 'white', border: 'none', borderRadius: 12, padding: '12px 24px', fontWeight: 600, cursor: 'pointer', fontSize: 14 },
+  secondaryBtn: { background: COLORS.bg, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: '12px 24px', fontWeight: 600, cursor: 'pointer', fontSize: 14 },
+  card: { background: 'white', borderRadius: 16, padding: 24, border: `1px solid ${COLORS.border}` },
+  th: { textAlign: 'left', padding: '12px 16px', fontSize: 12, fontWeight: 600, color: COLORS.textLight, textTransform: 'uppercase' },
+  td: { padding: '16px', fontSize: 14 },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -112,34 +53,21 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      } else {
-        setLoading(false);
-      }
+      if (session?.user) fetchProfile(session.user.id);
+      else setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      } else {
-        setProfile(null);
-        setLoading(false);
-      }
+      if (session?.user) fetchProfile(session.user.id);
+      else { setProfile(null); setLoading(false); }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
   const fetchProfile = async (userId) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, email, name, role, permissions, phone, title, active')
-      .eq('id', userId)
-      .single();
-    
-    if (error) console.error('Error fetching profile:', error);
+    const { data } = await supabase.from('profiles').select('id, email, name, role, permissions, phone, title, active').eq('id', userId).single();
     if (data) setProfile(data);
     setLoading(false);
   };
@@ -151,89 +79,111 @@ export default function App() {
     setSection('dashboard');
   };
 
-  const isAdmin = profile?.role === 'admin';
-
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: COLORS.bg }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 32, marginBottom: 16 }}>☀️</div>
-          <div style={{ color: COLORS.textLight }}>Indlæser...</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <LoginPage />;
-  }
+  if (loading) return <LoadingScreen />;
 
   return (
-    <AuthContext.Provider value={{ user, profile, logout, isAdmin }}>
-      <div style={{ display: 'flex', minHeight: '100vh', background: COLORS.bg }}>
-        <nav style={{ width: 240, background: 'white', borderRight: `1px solid ${COLORS.border}`, padding: 20, position: 'relative' }}>
-          <div style={{ marginBottom: 32 }}>
-            <div style={{ fontSize: 24, fontWeight: 700, color: COLORS.primary }}>☀️ Elta Solar</div>
-          </div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <NavButton active={section === 'dashboard'} onClick={() => setSection('dashboard')}>📊 Overblik</NavButton>
-            <NavButton active={section === 'kunder'} onClick={() => setSection('kunder')}>👥 Kunder</NavButton>
-            <NavButton active={section === 'projekter'} onClick={() => setSection('projekter')}>📁 Projekter</NavButton>
-            {isAdmin && (
-              <NavButton active={section === 'indstillinger'} onClick={() => setSection('indstillinger')}>⚙️ Indstillinger</NavButton>
-            )}
-          </div>
-
-          <div style={{ position: 'absolute', bottom: 20, left: 20, right: 20 }}>
-            <div style={{ padding: 12, background: COLORS.bg, borderRadius: 8, marginBottom: 8 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{profile?.name || profile?.email}</div>
-              <div style={{ fontSize: 12, color: COLORS.textLight }}>
-                {profile?.role === 'admin' ? '👑 Administrator' : profile?.role}
-              </div>
-            </div>
-            <button onClick={logout} style={{ ...STYLES.secondaryBtn, width: '100%', padding: '8px 16px' }}>
-              Log ud
-            </button>
-          </div>
-        </nav>
-
-        <main style={{ flex: 1, padding: 32, overflow: 'auto' }}>
-          {section === 'dashboard' && <Dashboard />}
-          {section === 'kunder' && <KunderPage />}
-          {section === 'projekter' && <ProjekterPage />}
-          {section === 'indstillinger' && isAdmin && <IndstillingerPage />}
-        </main>
+    <AuthContext.Provider value={{ user, profile, logout }}>
+      <div style={{ minHeight: '100vh', background: COLORS.bg, fontFamily: "'Inter', -apple-system, sans-serif" }}>
+        {!user ? <LoginPage /> : (
+          <>
+            <Navigation section={section} setSection={setSection} />
+            <main style={{ maxWidth: 1400, margin: '0 auto', padding: '24px' }}>
+              {section === 'dashboard' && <Dashboard setSection={setSection} />}
+              {section === 'kunder' && <KunderSystem />}
+              {section === 'projekter' && <ProjekterSystem />}
+              {section === 'indstillinger' && profile?.role === 'admin' && <IndstillingerSystem />}
+            </main>
+          </>
+        )}
       </div>
     </AuthContext.Provider>
   );
 }
 
-function NavButton({ children, active, onClick }) {
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// LOADING & LOGO (Original)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function LoadingScreen() {
   return (
-    <button
-      onClick={onClick}
-      style={{
-        display: 'block',
-        width: '100%',
-        textAlign: 'left',
-        padding: '10px 12px',
-        border: 'none',
-        borderRadius: 8,
-        background: active ? COLORS.primary : 'transparent',
-        color: active ? 'white' : COLORS.text,
-        fontWeight: 500,
-        cursor: 'pointer',
-        fontSize: 14
-      }}
-    >
-      {children}
-    </button>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: COLORS.bg }}>
+      <div style={{ textAlign: 'center' }}>
+        <SolarLogo size={60} />
+        <p style={{ marginTop: 16, color: COLORS.textLight }}>Indlæser Elta Solar...</p>
+      </div>
+    </div>
+  );
+}
+
+function SolarLogo({ size = 40 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100">
+      <g fill={COLORS.accent}>
+        {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => (
+          <rect key={i} x="47" y="5" width="6" height="15" rx="3" transform={`rotate(${angle} 50 50)`} />
+        ))}
+      </g>
+      <rect x="30" y="35" width="40" height="30" rx="4" fill={COLORS.primary} />
+      <line x1="30" y1="45" x2="70" y2="45" stroke="white" strokeWidth="2" />
+      <line x1="30" y1="55" x2="70" y2="55" stroke="white" strokeWidth="2" />
+      <line x1="40" y1="35" x2="40" y2="65" stroke="white" strokeWidth="2" />
+      <line x1="50" y1="35" x2="50" y2="65" stroke="white" strokeWidth="2" />
+      <line x1="60" y1="35" x2="60" y2="65" stroke="white" strokeWidth="2" />
+      <rect x="45" y="65" width="10" height="12" rx="2" fill={COLORS.primary} />
+      <path d="M 35 85 Q 50 70 65 85" stroke={COLORS.primary} strokeWidth="4" fill="none" strokeLinecap="round" />
+    </svg>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// LOGIN PAGE
+// NAVIGATION (Original topmenu)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function Navigation({ section, setSection }) {
+  const { profile, logout } = useAuth();
+  const isAdmin = profile?.role === 'admin';
+  
+  const menuItems = [
+    { id: 'dashboard', label: 'Overblik', icon: '📊' },
+    { id: 'kunder', label: 'Kunder', icon: '👥' },
+    { id: 'projekter', label: 'Projekter', icon: '🔧' },
+    { id: 'indstillinger', label: 'Indstillinger', icon: '⚙️', adminOnly: true },
+  ];
+
+  return (
+    <nav style={{ background: 'white', borderBottom: `1px solid ${COLORS.border}`, padding: '0 24px', position: 'sticky', top: 0, zIndex: 100 }}>
+      <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <SolarLogo size={32} />
+          <span style={{ fontWeight: 700, fontSize: 18 }}><span style={{ color: COLORS.primary }}>Elta</span><span style={{ color: COLORS.accent }}>Solar</span></span>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {menuItems.map(item => (
+            (!item.adminOnly || isAdmin) && (
+              <button key={item.id} onClick={() => setSection(item.id)} style={{
+                background: section === item.id ? COLORS.primary : 'transparent',
+                color: section === item.id ? 'white' : COLORS.text,
+                border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 500, cursor: 'pointer', fontSize: 13
+              }}>
+                {item.icon} {item.label}
+              </button>
+            )
+          ))}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <span style={{ fontSize: 14, color: COLORS.textLight }}>
+            {profile?.name || profile?.email}
+            {isAdmin && <span style={{ marginLeft: 8, padding: '2px 8px', background: COLORS.primary, color: 'white', borderRadius: 4, fontSize: 10 }}>ADMIN</span>}
+          </span>
+          <button onClick={logout} style={{ ...STYLES.secondaryBtn, padding: '8px 16px' }}>Log ud</button>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// LOGIN (Original)
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function LoginPage() {
@@ -242,44 +192,39 @@ function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    
     if (error) setError(error.message);
     setLoading(false);
   };
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: COLORS.bg }}>
-      <div style={{ ...STYLES.card, width: 400 }}>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: `linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.primaryDark} 100%)`, padding: 20 }}>
+      <div style={{ background: 'white', borderRadius: 24, padding: 48, width: '100%', maxWidth: 420, boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>☀️</div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: COLORS.primary }}>Elta Solar</h1>
-          <p style={{ color: COLORS.textLight, marginTop: 8 }}>Log ind for at fortsætte</p>
-        </div>
-
-        <form onSubmit={handleLogin}>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={STYLES.input} required />
-          </div>
-
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Adgangskode</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={STYLES.input} required />
-          </div>
-
-          {error && (
-            <div style={{ padding: 12, background: '#FEE2E2', color: COLORS.error, borderRadius: 8, marginBottom: 16, fontSize: 14 }}>
-              {error}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 8 }}>
+            <SolarLogo size={48} />
+            <div style={{ fontSize: 28, fontWeight: 800 }}>
+              <span style={{ color: COLORS.primary }}>Elta</span>
+              <span style={{ color: COLORS.accent }}>Solar</span>
             </div>
-          )}
-
-          <button type="submit" disabled={loading} style={{ ...STYLES.primaryBtn, width: '100%', opacity: loading ? 0.7 : 1 }}>
+          </div>
+          <p style={{ color: COLORS.textLight, fontSize: 14 }}>Fra sol til stikkontakt – nemt og sikkert</p>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={STYLES.label}>Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} style={STYLES.input} placeholder="din@email.dk" required />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={STYLES.label}>Adgangskode</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} style={STYLES.input} placeholder="••••••••" required />
+          </div>
+          {error && <div style={{ padding: 12, background: '#FEE2E2', color: COLORS.error, borderRadius: 8, marginBottom: 16, fontSize: 14 }}>{error}</div>}
+          <button type="submit" disabled={loading} style={{ ...STYLES.primaryBtn, width: '100%', padding: 16, marginTop: 8, opacity: loading ? 0.7 : 1 }}>
             {loading ? 'Logger ind...' : 'Log ind'}
           </button>
         </form>
@@ -289,78 +234,70 @@ function LoginPage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// DASHBOARD
+// DASHBOARD (Original)
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-function Dashboard() {
-  const [stats, setStats] = useState({ kunder: 0, projekter: 0 });
+function Dashboard({ setSection }) {
+  const [stats, setStats] = useState({ customers: 0, projects: 0 });
   const { profile } = useAuth();
 
-  useEffect(() => {
-    loadStats();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
-  const loadStats = async () => {
-    const [kunderRes, projekterRes] = await Promise.all([
+  const loadData = async () => {
+    const [customers, projects] = await Promise.all([
       supabase.from('customers').select('id', { count: 'exact', head: true }),
       supabase.from('projects').select('id', { count: 'exact', head: true })
     ]);
-    setStats({
-      kunder: kunderRes.count || 0,
-      projekter: projekterRes.count || 0
-    });
+    setStats({ customers: customers.count || 0, projects: projects.count || 0 });
   };
 
   return (
     <div>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Velkommen, {profile?.name || 'bruger'}</h1>
-      <p style={{ color: COLORS.textLight, marginBottom: 32 }}>Her er dit overblik</p>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 24 }}>
-        <div style={STYLES.card}>
-          <div style={{ fontSize: 14, color: COLORS.textLight, marginBottom: 8 }}>Kunder</div>
-          <div style={{ fontSize: 36, fontWeight: 700, color: COLORS.primary }}>{stats.kunder}</div>
-        </div>
-        <div style={STYLES.card}>
-          <div style={{ fontSize: 14, color: COLORS.textLight, marginBottom: 8 }}>Projekter</div>
-          <div style={{ fontSize: 36, fontWeight: 700, color: COLORS.primary }}>{stats.projekter}</div>
-        </div>
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Velkommen, {profile?.name || 'bruger'}</h1>
+        <p style={{ color: COLORS.textLight, marginTop: 4 }}>Her er dit overblik</p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24 }}>
+        <StatCard icon="👥" label="Kunder" value={stats.customers} onClick={() => setSection('kunder')} />
+        <StatCard icon="🔧" label="Projekter" value={stats.projects} onClick={() => setSection('projekter')} />
       </div>
     </div>
   );
 }
 
+function StatCard({ icon, label, value, onClick }) {
+  return (
+    <div onClick={onClick} style={{ ...STYLES.card, cursor: 'pointer', transition: 'transform 0.2s' }}>
+      <div style={{ fontSize: 32, marginBottom: 8 }}>{icon}</div>
+      <div style={{ fontSize: 32, fontWeight: 700, color: COLORS.primary }}>{value}</div>
+      <div style={{ color: COLORS.textLight, fontSize: 14 }}>{label}</div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// KUNDER PAGE
-// Database kolonner: id, name, company, cvr, email, phone, address, zip, city, 
-//                    delivery_address, delivery_zip, delivery_city, notes, created_at
+// KUNDER SYSTEM
+// Database: id, name, company, cvr, email, phone, address, zip, city, 
+//           delivery_address, delivery_zip, delivery_city, notes, created_at
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-function KunderPage() {
+function KunderSystem() {
   const [kunder, setKunder] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingKunde, setEditingKunde] = useState(null);
 
-  useEffect(() => {
-    loadKunder();
-  }, []);
+  useEffect(() => { loadKunder(); }, []);
 
   const loadKunder = async () => {
     const { data, error } = await supabase
       .from('customers')
       .select('id, name, company, cvr, email, phone, address, zip, city, delivery_address, delivery_zip, delivery_city, notes, created_at')
       .order('created_at', { ascending: false });
-    
-    if (error) {
-      console.error('Error loading customers:', error);
-      alert('Fejl ved indlæsning: ' + error.message);
-      return;
-    }
+    if (error) { alert('Fejl: ' + error.message); return; }
     setKunder(data || []);
   };
 
   const saveKunde = async (form) => {
-    // Byg payload med KUN de kolonner der findes i databasen
     const payload = {
       name: form.name,
       company: form.company || null,
@@ -377,41 +314,21 @@ function KunderPage() {
     };
 
     if (editingKunde) {
-      // UPDATE
-      const { error } = await supabase
-        .from('customers')
-        .update(payload)
-        .eq('id', editingKunde.id);
-
-      if (error) {
-        alert('Fejl ved opdatering: ' + error.message);
-        return;
-      }
+      const { error } = await supabase.from('customers').update(payload).eq('id', editingKunde.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
     } else {
-      // INSERT
-      const { error } = await supabase
-        .from('customers')
-        .insert([payload]);
-
-      if (error) {
-        alert('Fejl ved oprettelse: ' + error.message);
-        return;
-      }
+      const { error } = await supabase.from('customers').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
     }
-
     setShowModal(false);
     setEditingKunde(null);
     loadKunder();
   };
 
   const deleteKunde = async (id) => {
-    if (!confirm('Er du sikker på du vil slette denne kunde?')) return;
-    
+    if (!confirm('Slet denne kunde?')) return;
     const { error } = await supabase.from('customers').delete().eq('id', id);
-    if (error) {
-      alert('Fejl ved sletning: ' + error.message);
-      return;
-    }
+    if (error) { alert('Fejl: ' + error.message); return; }
     loadKunder();
   };
 
@@ -420,55 +337,40 @@ function KunderPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Kunder</h1>
-          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{kunder.length} kunder i systemet</p>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{kunder.length} kunder</p>
         </div>
-        <button onClick={() => { setEditingKunde(null); setShowModal(true); }} style={STYLES.primaryBtn}>
-          + Ny kunde
-        </button>
+        <button onClick={() => { setEditingKunde(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Ny kunde</button>
       </div>
 
       {kunder.length === 0 ? (
         <div style={{ ...STYLES.card, textAlign: 'center', padding: 48 }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>👥</div>
-          <h3 style={{ margin: 0, marginBottom: 8 }}>Ingen kunder endnu</h3>
-          <p style={{ color: COLORS.textLight, marginBottom: 16 }}>Opret din første kunde</p>
-          <button onClick={() => setShowModal(true)} style={STYLES.primaryBtn}>+ Opret kunde</button>
+          <h3>Ingen kunder endnu</h3>
+          <button onClick={() => setShowModal(true)} style={{ ...STYLES.primaryBtn, marginTop: 16 }}>+ Opret kunde</button>
         </div>
       ) : (
         <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={STYLES.th}>Navn</th>
-                <th style={STYLES.th}>Email</th>
-                <th style={STYLES.th}>Telefon</th>
-                <th style={STYLES.th}>By</th>
-                <th style={STYLES.th}></th>
-              </tr>
-            </thead>
+            <thead><tr style={{ background: COLORS.bg }}>
+              <th style={STYLES.th}>Navn</th>
+              <th style={STYLES.th}>Email</th>
+              <th style={STYLES.th}>Telefon</th>
+              <th style={STYLES.th}>By</th>
+              <th style={STYLES.th}></th>
+            </tr></thead>
             <tbody>
-              {kunder.map(kunde => (
-                <tr key={kunde.id}>
+              {kunder.map(k => (
+                <tr key={k.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
                   <td style={STYLES.td}>
-                    <div style={{ fontWeight: 600 }}>{kunde.company || kunde.name}</div>
-                    {kunde.company && <div style={{ fontSize: 12, color: COLORS.textLight }}>{kunde.name}</div>}
+                    <div style={{ fontWeight: 600 }}>{k.company || k.name}</div>
+                    {k.company && <div style={{ fontSize: 12, color: COLORS.textLight }}>{k.name}</div>}
                   </td>
-                  <td style={STYLES.td}>{kunde.email || '-'}</td>
-                  <td style={STYLES.td}>{kunde.phone || '-'}</td>
-                  <td style={STYLES.td}>{kunde.city || '-'}</td>
+                  <td style={STYLES.td}>{k.email || '-'}</td>
+                  <td style={STYLES.td}>{k.phone || '-'}</td>
+                  <td style={STYLES.td}>{k.city || '-'}</td>
                   <td style={STYLES.td}>
-                    <button 
-                      onClick={() => { setEditingKunde(kunde); setShowModal(true); }} 
-                      style={{ ...STYLES.secondaryBtn, padding: '6px 12px', marginRight: 8 }}
-                    >
-                      Rediger
-                    </button>
-                    <button 
-                      onClick={() => deleteKunde(kunde.id)} 
-                      style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}
-                    >
-                      Slet
-                    </button>
+                    <button onClick={() => { setEditingKunde(k); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', marginRight: 8 }}>Rediger</button>
+                    <button onClick={() => deleteKunde(k.id)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}>Slet</button>
                   </td>
                 </tr>
               ))}
@@ -479,22 +381,12 @@ function KunderPage() {
 
       {showModal && (
         <Modal title={editingKunde ? 'Rediger kunde' : 'Ny kunde'} onClose={() => { setShowModal(false); setEditingKunde(null); }}>
-          <KundeForm 
-            initial={editingKunde} 
-            onSave={saveKunde} 
-            onCancel={() => { setShowModal(false); setEditingKunde(null); }} 
-          />
+          <KundeForm initial={editingKunde} onSave={saveKunde} onCancel={() => { setShowModal(false); setEditingKunde(null); }} />
         </Modal>
       )}
     </div>
   );
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// KUNDE FORM
-// Felter: name, company, cvr, email, phone, address, zip, city, 
-//         delivery_address, delivery_zip, delivery_city, notes
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function KundeForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
@@ -514,206 +406,116 @@ function KundeForm({ initial, onSave, onCancel }) {
   const [sameAddress, setSameAddress] = useState(!initial?.delivery_address);
 
   const handleSubmit = () => {
-    if (!form.name) {
-      alert('Navn er påkrævet');
-      return;
-    }
-    
+    if (!form.name) { alert('Navn er påkrævet'); return; }
     const saveData = {
       ...form,
       delivery_address: sameAddress ? form.address : form.delivery_address,
       delivery_zip: sameAddress ? form.zip : form.delivery_zip,
       delivery_city: sameAddress ? form.city : form.delivery_city
     };
-    
     onSave(saveData);
   };
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      {/* Firma info */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Firmanavn</label>
-          <input
-            value={form.company}
-            onChange={(e) => setForm({ ...form, company: e.target.value })}
-            style={STYLES.input}
-            placeholder="Firma ApS (valgfrit)"
-          />
+          <label style={STYLES.label}>Firmanavn</label>
+          <input value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} style={STYLES.input} placeholder="Firma ApS (valgfrit)" />
         </div>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>CVR</label>
-          <input
-            value={form.cvr}
-            onChange={(e) => setForm({ ...form, cvr: e.target.value })}
-            style={STYLES.input}
-            placeholder="12345678"
-          />
+          <label style={STYLES.label}>CVR</label>
+          <input value={form.cvr} onChange={e => setForm({ ...form, cvr: e.target.value })} style={STYLES.input} placeholder="12345678" />
         </div>
       </div>
-
-      {/* Kontaktperson / Navn */}
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Kontaktperson / Navn *</label>
-        <input
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          style={STYLES.input}
-          placeholder="Jens Jensen"
-        />
+        <label style={STYLES.label}>Kontaktperson / Navn *</label>
+        <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={STYLES.input} placeholder="Jens Jensen" />
       </div>
-
-      {/* Kontakt */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Email</label>
-          <input
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-            style={STYLES.input}
-            placeholder="email@eksempel.dk"
-          />
+          <label style={STYLES.label}>Email</label>
+          <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={STYLES.input} placeholder="email@eksempel.dk" />
         </div>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Telefon</label>
-          <input
-            value={form.phone}
-            onChange={(e) => setForm({ ...form, phone: e.target.value })}
-            style={STYLES.input}
-            placeholder="12 34 56 78"
-          />
+          <label style={STYLES.label}>Telefon</label>
+          <input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} style={STYLES.input} placeholder="12 34 56 78" />
         </div>
       </div>
-
-      {/* Adresse */}
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Adresse</label>
-        <input
-          value={form.address}
-          onChange={(e) => setForm({ ...form, address: e.target.value })}
-          style={STYLES.input}
-          placeholder="Vejnavn 123"
-        />
+        <label style={STYLES.label}>Adresse</label>
+        <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} style={STYLES.input} placeholder="Vejnavn 123" />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Postnr</label>
-          <input
-            value={form.zip}
-            onChange={(e) => setForm({ ...form, zip: e.target.value })}
-            style={STYLES.input}
-            placeholder="1234"
-          />
+          <label style={STYLES.label}>Postnr</label>
+          <input value={form.zip} onChange={e => setForm({ ...form, zip: e.target.value })} style={STYLES.input} placeholder="1234" />
         </div>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>By</label>
-          <input
-            value={form.city}
-            onChange={(e) => setForm({ ...form, city: e.target.value })}
-            style={STYLES.input}
-            placeholder="København"
-          />
+          <label style={STYLES.label}>By</label>
+          <input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} style={STYLES.input} placeholder="København" />
         </div>
       </div>
-
-      {/* Leveringsadresse */}
-      <div style={{ marginTop: 8 }}>
+      <div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-          <input type="checkbox" checked={sameAddress} onChange={(e) => setSameAddress(e.target.checked)} />
+          <input type="checkbox" checked={sameAddress} onChange={e => setSameAddress(e.target.checked)} />
           <span style={{ fontSize: 14 }}>Leveringsadresse er samme som adresse</span>
         </label>
       </div>
-
       {!sameAddress && (
         <>
           <div>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Leveringsadresse</label>
-            <input
-              value={form.delivery_address}
-              onChange={(e) => setForm({ ...form, delivery_address: e.target.value })}
-              style={STYLES.input}
-            />
+            <label style={STYLES.label}>Leveringsadresse</label>
+            <input value={form.delivery_address} onChange={e => setForm({ ...form, delivery_address: e.target.value })} style={STYLES.input} />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
             <div>
-              <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Postnr</label>
-              <input
-                value={form.delivery_zip}
-                onChange={(e) => setForm({ ...form, delivery_zip: e.target.value })}
-                style={STYLES.input}
-              />
+              <label style={STYLES.label}>Postnr</label>
+              <input value={form.delivery_zip} onChange={e => setForm({ ...form, delivery_zip: e.target.value })} style={STYLES.input} />
             </div>
             <div>
-              <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>By</label>
-              <input
-                value={form.delivery_city}
-                onChange={(e) => setForm({ ...form, delivery_city: e.target.value })}
-                style={STYLES.input}
-              />
+              <label style={STYLES.label}>By</label>
+              <input value={form.delivery_city} onChange={e => setForm({ ...form, delivery_city: e.target.value })} style={STYLES.input} />
             </div>
           </div>
         </>
       )}
-
-      {/* Noter */}
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Noter</label>
-        <textarea
-          value={form.notes}
-          onChange={(e) => setForm({ ...form, notes: e.target.value })}
-          style={{ ...STYLES.input, minHeight: 80, resize: 'vertical' }}
-          placeholder="Evt. bemærkninger..."
-        />
+        <label style={STYLES.label}>Noter</label>
+        <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} style={{ ...STYLES.input, minHeight: 80 }} placeholder="Evt. bemærkninger..." />
       </div>
-
-      {/* Knapper */}
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
-        <button onClick={handleSubmit} style={STYLES.primaryBtn}>
-          {initial ? 'Gem ændringer' : 'Opret kunde'}
-        </button>
+        <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret kunde'}</button>
       </div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// PROJEKTER PAGE
-// Database kolonner: id, customer_id, name, description, address, zip, city, status, created_at, updated_at
+// PROJEKTER SYSTEM
+// Database: id, customer_id, name, description, address, zip, city, status, created_at, updated_at
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-function ProjekterPage() {
+function ProjekterSystem() {
   const [projekter, setProjekter] = useState([]);
   const [kunder, setKunder] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingProjekt, setEditingProjekt] = useState(null);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [projekterRes, kunderRes] = await Promise.all([
-      supabase
-        .from('projects')
-        .select('id, customer_id, name, description, address, zip, city, status, created_at, customers(name, company)')
-        .order('created_at', { ascending: false }),
+    const [pRes, kRes] = await Promise.all([
+      supabase.from('projects').select('id, customer_id, name, description, address, zip, city, status, created_at, customers(name, company)').order('created_at', { ascending: false }),
       supabase.from('customers').select('id, name, company')
     ]);
-    
-    if (projekterRes.error) {
-      console.error('Error loading projects:', projekterRes.error);
-      alert('Fejl ved indlæsning: ' + projekterRes.error.message);
-      return;
-    }
-    setProjekter(projekterRes.data || []);
-    setKunder(kunderRes.data || []);
+    if (pRes.error) { alert('Fejl: ' + pRes.error.message); return; }
+    setProjekter(pRes.data || []);
+    setKunder(kRes.data || []);
   };
 
   const saveProjekt = async (form) => {
-    // Byg payload med KUN de kolonner der findes i databasen
     const payload = {
       customer_id: form.customer_id || null,
       name: form.name,
@@ -725,116 +527,68 @@ function ProjekterPage() {
     };
 
     if (editingProjekt) {
-      // UPDATE
       payload.updated_at = new Date().toISOString();
-      
-      const { error } = await supabase
-        .from('projects')
-        .update(payload)
-        .eq('id', editingProjekt.id);
-
-      if (error) {
-        alert('Fejl ved opdatering: ' + error.message);
-        return;
-      }
+      const { error } = await supabase.from('projects').update(payload).eq('id', editingProjekt.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
     } else {
-      // INSERT
-      const { error } = await supabase
-        .from('projects')
-        .insert([payload]);
-
-      if (error) {
-        alert('Fejl ved oprettelse: ' + error.message);
-        return;
-      }
+      const { error } = await supabase.from('projects').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
     }
-
     setShowModal(false);
     setEditingProjekt(null);
     loadData();
   };
 
   const deleteProjekt = async (id) => {
-    if (!confirm('Er du sikker på du vil slette dette projekt?')) return;
-    
+    if (!confirm('Slet dette projekt?')) return;
     const { error } = await supabase.from('projects').delete().eq('id', id);
-    if (error) {
-      alert('Fejl ved sletning: ' + error.message);
-      return;
-    }
+    if (error) { alert('Fejl: ' + error.message); return; }
     loadData();
   };
 
-  const statusColors = {
-    aktiv: { bg: '#D1FAE5', color: '#059669' },
-    afsluttet: { bg: '#DBEAFE', color: '#1D4ED8' },
-    annulleret: { bg: '#FEE2E2', color: '#DC2626' }
-  };
+  const statusColors = { aktiv: { bg: '#D1FAE5', color: '#059669' }, afsluttet: { bg: '#DBEAFE', color: '#1D4ED8' }, annulleret: { bg: '#FEE2E2', color: '#DC2626' } };
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Projekter</h1>
-          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{projekter.length} projekter i systemet</p>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{projekter.length} projekter</p>
         </div>
-        <button onClick={() => { setEditingProjekt(null); setShowModal(true); }} style={STYLES.primaryBtn}>
-          + Nyt projekt
-        </button>
+        <button onClick={() => { setEditingProjekt(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Nyt projekt</button>
       </div>
 
       {projekter.length === 0 ? (
         <div style={{ ...STYLES.card, textAlign: 'center', padding: 48 }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>📁</div>
-          <h3 style={{ margin: 0, marginBottom: 8 }}>Ingen projekter endnu</h3>
-          <p style={{ color: COLORS.textLight, marginBottom: 16 }}>Opret dit første projekt</p>
-          <button onClick={() => setShowModal(true)} style={STYLES.primaryBtn}>+ Opret projekt</button>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🔧</div>
+          <h3>Ingen projekter endnu</h3>
+          <button onClick={() => setShowModal(true)} style={{ ...STYLES.primaryBtn, marginTop: 16 }}>+ Opret projekt</button>
         </div>
       ) : (
         <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                <th style={STYLES.th}>Projekt</th>
-                <th style={STYLES.th}>Kunde</th>
-                <th style={STYLES.th}>Adresse</th>
-                <th style={STYLES.th}>Status</th>
-                <th style={STYLES.th}></th>
-              </tr>
-            </thead>
+            <thead><tr style={{ background: COLORS.bg }}>
+              <th style={STYLES.th}>Projekt</th>
+              <th style={STYLES.th}>Kunde</th>
+              <th style={STYLES.th}>Adresse</th>
+              <th style={STYLES.th}>Status</th>
+              <th style={STYLES.th}></th>
+            </tr></thead>
             <tbody>
-              {projekter.map(projekt => (
-                <tr key={projekt.id}>
+              {projekter.map(p => (
+                <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
                   <td style={STYLES.td}>
-                    <div style={{ fontWeight: 600 }}>{projekt.name}</div>
-                    {projekt.description && <div style={{ fontSize: 12, color: COLORS.textLight }}>{projekt.description}</div>}
+                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    {p.description && <div style={{ fontSize: 12, color: COLORS.textLight }}>{p.description}</div>}
                   </td>
-                  <td style={STYLES.td}>{projekt.customers?.company || projekt.customers?.name || '-'}</td>
-                  <td style={STYLES.td}>{projekt.city || projekt.address || '-'}</td>
+                  <td style={STYLES.td}>{p.customers?.company || p.customers?.name || '-'}</td>
+                  <td style={STYLES.td}>{p.city || p.address || '-'}</td>
                   <td style={STYLES.td}>
-                    <span style={{ 
-                      padding: '4px 8px', 
-                      borderRadius: 4, 
-                      fontSize: 12,
-                      background: statusColors[projekt.status]?.bg || '#F3F4F6',
-                      color: statusColors[projekt.status]?.color || '#6B7280'
-                    }}>
-                      {projekt.status}
-                    </span>
+                    <span style={{ padding: '4px 8px', borderRadius: 4, fontSize: 12, background: statusColors[p.status]?.bg, color: statusColors[p.status]?.color }}>{p.status}</span>
                   </td>
                   <td style={STYLES.td}>
-                    <button 
-                      onClick={() => { setEditingProjekt(projekt); setShowModal(true); }} 
-                      style={{ ...STYLES.secondaryBtn, padding: '6px 12px', marginRight: 8 }}
-                    >
-                      Rediger
-                    </button>
-                    <button 
-                      onClick={() => deleteProjekt(projekt.id)} 
-                      style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}
-                    >
-                      Slet
-                    </button>
+                    <button onClick={() => { setEditingProjekt(p); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', marginRight: 8 }}>Rediger</button>
+                    <button onClick={() => deleteProjekt(p.id)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}>Slet</button>
                   </td>
                 </tr>
               ))}
@@ -845,22 +599,12 @@ function ProjekterPage() {
 
       {showModal && (
         <Modal title={editingProjekt ? 'Rediger projekt' : 'Nyt projekt'} onClose={() => { setShowModal(false); setEditingProjekt(null); }}>
-          <ProjektForm 
-            initial={editingProjekt} 
-            kunder={kunder}
-            onSave={saveProjekt} 
-            onCancel={() => { setShowModal(false); setEditingProjekt(null); }} 
-          />
+          <ProjektForm initial={editingProjekt} kunder={kunder} onSave={saveProjekt} onCancel={() => { setShowModal(false); setEditingProjekt(null); }} />
         </Modal>
       )}
     </div>
   );
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// PROJEKT FORM
-// Felter: customer_id, name, description, address, zip, city, status
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function ProjektForm({ initial, kunder, onSave, onCancel }) {
   const [form, setForm] = useState({
@@ -874,60 +618,49 @@ function ProjektForm({ initial, kunder, onSave, onCancel }) {
   });
 
   const handleSubmit = () => {
-    if (!form.name) {
-      alert('Projektnavn er påkrævet');
-      return;
-    }
+    if (!form.name) { alert('Projektnavn er påkrævet'); return; }
     onSave(form);
   };
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Kunde</label>
-        <select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })} style={STYLES.select}>
+        <label style={STYLES.label}>Kunde</label>
+        <select value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} style={STYLES.select}>
           <option value="">Ingen kunde valgt</option>
-          {kunder.map(k => (
-            <option key={k.id} value={k.id}>{k.company || k.name}</option>
-          ))}
+          {kunder.map(k => <option key={k.id} value={k.id}>{k.company || k.name}</option>)}
         </select>
       </div>
-
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Projektnavn *</label>
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={STYLES.input} placeholder="F.eks. Solcelleanlæg Villa" />
+        <label style={STYLES.label}>Projektnavn *</label>
+        <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={STYLES.input} placeholder="F.eks. Solcelleanlæg Villa" />
       </div>
-
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Beskrivelse</label>
-        <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} style={{ ...STYLES.input, minHeight: 80, resize: 'vertical' }} placeholder="Kort beskrivelse af projektet..." />
+        <label style={STYLES.label}>Beskrivelse</label>
+        <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} style={{ ...STYLES.input, minHeight: 80 }} placeholder="Kort beskrivelse..." />
       </div>
-
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Projektadresse</label>
-        <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} style={STYLES.input} placeholder="Vejnavn 123" />
+        <label style={STYLES.label}>Projektadresse</label>
+        <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} style={STYLES.input} placeholder="Vejnavn 123" />
       </div>
-      
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Postnr</label>
-          <input value={form.zip} onChange={(e) => setForm({ ...form, zip: e.target.value })} style={STYLES.input} />
+          <label style={STYLES.label}>Postnr</label>
+          <input value={form.zip} onChange={e => setForm({ ...form, zip: e.target.value })} style={STYLES.input} />
         </div>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>By</label>
-          <input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} style={STYLES.input} />
+          <label style={STYLES.label}>By</label>
+          <input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} style={STYLES.input} />
         </div>
       </div>
-
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Status</label>
-        <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} style={STYLES.select}>
+        <label style={STYLES.label}>Status</label>
+        <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} style={STYLES.select}>
           <option value="aktiv">Aktiv</option>
           <option value="afsluttet">Afsluttet</option>
           <option value="annulleret">Annulleret</option>
         </select>
       </div>
-
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
         <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret projekt'}</button>
@@ -937,142 +670,90 @@ function ProjektForm({ initial, kunder, onSave, onCancel }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// INDSTILLINGER PAGE (Admin only)
+// INDSTILLINGER SYSTEM (Brugere)
+// Database: id, email, name, role, permissions, phone, title, active, created_at
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-function IndstillingerPage() {
+function IndstillingerSystem() {
   const [brugere, setBrugere] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingBruger, setEditingBruger] = useState(null);
 
-  useEffect(() => {
-    loadBrugere();
-  }, []);
+  useEffect(() => { loadBrugere(); }, []);
 
   const loadBrugere = async () => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, email, name, role, permissions, phone, title, active, created_at')
-      .order('name');
-    
-    if (error) {
-      console.error('Error loading users:', error);
-      return;
-    }
+    const { data, error } = await supabase.from('profiles').select('id, email, name, role, permissions, phone, title, active, created_at').order('name');
+    if (error) { console.error(error); return; }
     setBrugere(data || []);
   };
 
   const saveBruger = async (form) => {
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        name: form.name,
-        role: form.role,
-        permissions: form.permissions,
-        phone: form.phone,
-        title: form.title,
-        active: form.active
-      })
-      .eq('id', form.id);
-
-    if (error) {
-      alert('Fejl ved opdatering: ' + error.message);
-      return;
-    }
-
+    const { error } = await supabase.from('profiles').update({
+      name: form.name,
+      role: form.role,
+      permissions: form.permissions,
+      phone: form.phone,
+      title: form.title,
+      active: form.active
+    }).eq('id', form.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
     setShowModal(false);
     setEditingBruger(null);
     loadBrugere();
   };
 
   const createBruger = async (form) => {
-    const { data, error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
       options: { data: { name: form.name, role: form.role } }
     });
-
-    if (error) {
-      alert('Fejl ved oprettelse: ' + error.message);
-      return;
-    }
-
+    if (error) { alert('Fejl: ' + error.message); return; }
     setTimeout(async () => {
-      await supabase
-        .from('profiles')
-        .update({
-          name: form.name,
-          role: form.role,
-          permissions: form.permissions,
-          phone: form.phone,
-          title: form.title,
-          active: true
-        })
-        .eq('email', form.email);
-      
+      await supabase.from('profiles').update({ name: form.name, role: form.role, permissions: form.permissions, phone: form.phone, title: form.title, active: true }).eq('email', form.email);
       loadBrugere();
     }, 1000);
-
     setShowModal(false);
     alert(`Bruger oprettet!\n\nEmail: ${form.email}\nAdgangskode: ${form.password}`);
   };
 
-  const roleLabels = {
-    admin: '👑 Administrator',
-    saelger: '💼 Sælger',
-    montoer: '🔧 Montør',
-    elev: '📚 Elev'
-  };
+  const roleLabels = { admin: '👑 Administrator', saelger: '💼 Sælger', montoer: '🔧 Montør', elev: '📚 Elev' };
 
   return (
     <div>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 24 }}>Indstillinger</h1>
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>👥 Brugere</h2>
-        <button onClick={() => { setEditingBruger(null); setShowModal(true); }} style={STYLES.primaryBtn}>
-          + Ny bruger
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Indstillinger</h1>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>Brugere og administration</p>
+        </div>
+        <button onClick={() => { setEditingBruger(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Ny bruger</button>
       </div>
 
       <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={STYLES.th}>Navn</th>
-              <th style={STYLES.th}>Email</th>
-              <th style={STYLES.th}>Rolle</th>
-              <th style={STYLES.th}>Status</th>
-              <th style={STYLES.th}></th>
-            </tr>
-          </thead>
+          <thead><tr style={{ background: COLORS.bg }}>
+            <th style={STYLES.th}>Navn</th>
+            <th style={STYLES.th}>Email</th>
+            <th style={STYLES.th}>Rolle</th>
+            <th style={STYLES.th}>Status</th>
+            <th style={STYLES.th}></th>
+          </tr></thead>
           <tbody>
-            {brugere.map(bruger => (
-              <tr key={bruger.id}>
+            {brugere.map(b => (
+              <tr key={b.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
                 <td style={STYLES.td}>
-                  <div style={{ fontWeight: 600 }}>{bruger.name || bruger.email}</div>
-                  {bruger.title && <div style={{ fontSize: 12, color: COLORS.textLight }}>{bruger.title}</div>}
+                  <div style={{ fontWeight: 600 }}>{b.name || b.email}</div>
+                  {b.title && <div style={{ fontSize: 12, color: COLORS.textLight }}>{b.title}</div>}
                 </td>
-                <td style={STYLES.td}>{bruger.email}</td>
-                <td style={STYLES.td}>{roleLabels[bruger.role] || bruger.role}</td>
+                <td style={STYLES.td}>{b.email}</td>
+                <td style={STYLES.td}>{roleLabels[b.role] || b.role}</td>
                 <td style={STYLES.td}>
-                  <span style={{ 
-                    padding: '4px 8px', 
-                    borderRadius: 4, 
-                    fontSize: 12,
-                    background: bruger.active ? '#D1FAE5' : '#FEE2E2',
-                    color: bruger.active ? '#059669' : '#DC2626'
-                  }}>
-                    {bruger.active ? 'Aktiv' : 'Inaktiv'}
+                  <span style={{ padding: '4px 8px', borderRadius: 4, fontSize: 12, background: b.active ? '#D1FAE5' : '#FEE2E2', color: b.active ? '#059669' : '#DC2626' }}>
+                    {b.active ? 'Aktiv' : 'Inaktiv'}
                   </span>
                 </td>
                 <td style={STYLES.td}>
-                  <button 
-                    onClick={() => { setEditingBruger(bruger); setShowModal(true); }} 
-                    style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}
-                  >
-                    Rediger
-                  </button>
+                  <button onClick={() => { setEditingBruger(b); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}>Rediger</button>
                 </td>
               </tr>
             ))}
@@ -1082,22 +763,12 @@ function IndstillingerPage() {
 
       {showModal && (
         <Modal title={editingBruger ? 'Rediger bruger' : 'Ny bruger'} onClose={() => { setShowModal(false); setEditingBruger(null); }}>
-          <BrugerForm 
-            initial={editingBruger} 
-            onSave={editingBruger ? saveBruger : createBruger} 
-            onCancel={() => { setShowModal(false); setEditingBruger(null); }}
-            isEdit={!!editingBruger}
-          />
+          <BrugerForm initial={editingBruger} onSave={editingBruger ? saveBruger : createBruger} onCancel={() => { setShowModal(false); setEditingBruger(null); }} isEdit={!!editingBruger} />
         </Modal>
       )}
     </div>
   );
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// BRUGER FORM
-// Felter: email, name, role, permissions, phone, title, active
-// ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function BrugerForm({ initial, onSave, onCancel, isEdit }) {
   const [form, setForm] = useState({
@@ -1131,8 +802,7 @@ function BrugerForm({ initial, onSave, onCancel, isEdit }) {
 
   const generatePassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-    const pwd = Array(12).fill(0).map(() => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
-    setForm({ ...form, password: pwd });
+    setForm({ ...form, password: Array(12).fill(0).map(() => chars.charAt(Math.floor(Math.random() * chars.length))).join('') });
   };
 
   const handleSubmit = () => {
@@ -1144,49 +814,44 @@ function BrugerForm({ initial, onSave, onCancel, isEdit }) {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Email *</label>
-        <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={STYLES.input} disabled={isEdit} placeholder="email@eksempel.dk" />
+        <label style={STYLES.label}>Email *</label>
+        <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={STYLES.input} disabled={isEdit} placeholder="email@eksempel.dk" />
       </div>
-
       {!isEdit && (
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Adgangskode *</label>
+          <label style={STYLES.label}>Adgangskode *</label>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input type="text" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} style={{ ...STYLES.input, flex: 1 }} placeholder="Min. 6 tegn" />
+            <input type="text" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} style={{ ...STYLES.input, flex: 1 }} placeholder="Min. 6 tegn" />
             <button type="button" onClick={generatePassword} style={STYLES.secondaryBtn}>Generer</button>
           </div>
         </div>
       )}
-
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Navn</label>
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={STYLES.input} placeholder="Jens Jensen" />
+        <label style={STYLES.label}>Navn</label>
+        <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={STYLES.input} placeholder="Jens Jensen" />
       </div>
-
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Titel</label>
-          <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} style={STYLES.input} placeholder="F.eks. Salgschef" />
+          <label style={STYLES.label}>Titel</label>
+          <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={STYLES.input} placeholder="F.eks. Salgschef" />
         </div>
         <div>
-          <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Telefon</label>
-          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={STYLES.input} placeholder="12 34 56 78" />
+          <label style={STYLES.label}>Telefon</label>
+          <input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} style={STYLES.input} placeholder="12 34 56 78" />
         </div>
       </div>
-
       <div>
-        <label style={{ display: 'block', marginBottom: 6, fontWeight: 600, fontSize: 14 }}>Rolle</label>
-        <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} style={STYLES.select}>
+        <label style={STYLES.label}>Rolle</label>
+        <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={STYLES.select}>
           <option value="saelger">Sælger</option>
           <option value="montoer">Montør</option>
           <option value="elev">Elev</option>
-          <option value="admin">Administrator (fuld adgang)</option>
+          <option value="admin">Administrator</option>
         </select>
       </div>
-
       {form.role !== 'admin' && (
         <div style={{ background: COLORS.bg, padding: 16, borderRadius: 8 }}>
-          <label style={{ display: 'block', marginBottom: 12, fontWeight: 600, fontSize: 14 }}>Rettigheder</label>
+          <label style={{ ...STYLES.label, marginBottom: 12 }}>Rettigheder</label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {allPermissions.map(perm => (
               <label key={perm.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
@@ -1197,23 +862,19 @@ function BrugerForm({ initial, onSave, onCancel, isEdit }) {
           </div>
         </div>
       )}
-
       {form.role === 'admin' && (
         <div style={{ background: '#DBEAFE', padding: 12, borderRadius: 8, fontSize: 14, color: '#1D4ED8' }}>
-          Administratorer har automatisk fuld adgang til alle funktioner.
+          Administratorer har automatisk fuld adgang.
         </div>
       )}
-
       {isEdit && (
         <div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-            <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
+            <input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} />
             <span style={{ fontWeight: 500 }}>Bruger er aktiv</span>
           </label>
-          <p style={{ fontSize: 12, color: COLORS.textLight, marginTop: 4 }}>Inaktive brugere kan ikke logge ind</p>
         </div>
       )}
-
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
         <button onClick={handleSubmit} style={STYLES.primaryBtn}>{isEdit ? 'Gem ændringer' : 'Opret bruger'}</button>
@@ -1223,13 +884,13 @@ function BrugerForm({ initial, onSave, onCancel, isEdit }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// MODAL
+// MODAL (Original)
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function Modal({ title, children, onClose }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-      <div style={{ background: 'white', borderRadius: 12, padding: 24, width: '100%', maxWidth: 500, maxHeight: '90vh', overflow: 'auto' }}>
+      <div style={{ background: 'white', borderRadius: 16, padding: 24, width: '100%', maxWidth: 500, maxHeight: '90vh', overflow: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{title}</h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: COLORS.textLight }}>×</button>
