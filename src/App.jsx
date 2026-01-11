@@ -706,17 +706,23 @@ function KundeForm({ initial, onSave, onCancel }) {
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function ProjekterSystem({ initialProjektId, onProjektOpened }) {
+  const { user, profile } = useAuth();
   const [projekter, setProjekter] = useState([]);
   const [kunder, setKunder] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingProjekt, setEditingProjekt] = useState(null);
   const [selectedProjekt, setSelectedProjekt] = useState(null);
+  const [projektFiler, setProjektFiler] = useState([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
 
   // Søgning, filtrering, sortering
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('alle'); // alle, aktiv, afsluttet, annulleret
   const [sortBy, setSortBy] = useState('created_at');
   const [sortDir, setSortDir] = useState('desc');
+
+  // Rettigheder: kun admin og sælger må uploade/slette
+  const canManageFiles = profile?.role === 'admin' || profile?.role === 'saelger';
 
   useEffect(() => { loadData(); }, []);
 
@@ -726,10 +732,18 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
       const projekt = projekter.find(p => p.id === initialProjektId);
       if (projekt) {
         setSelectedProjekt(projekt);
+        loadProjektFiler(initialProjektId);
         if (onProjektOpened) onProjektOpened();
       }
     }
   }, [initialProjektId, projekter]);
+
+  // Load filer når projekt vælges
+  useEffect(() => {
+    if (selectedProjekt) {
+      loadProjektFiler(selectedProjekt.id);
+    }
+  }, [selectedProjekt?.id]);
 
   const loadData = async () => {
     const [pRes, kRes] = await Promise.all([
@@ -739,6 +753,108 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     if (pRes.error) { alert('Fejl: ' + pRes.error.message); return; }
     setProjekter(pRes.data || []);
     setKunder(kRes.data || []);
+  };
+
+  const loadProjektFiler = async (projektId) => {
+    const { data, error } = await supabase
+      .from('project_files')
+      .select('id, file_name, file_path, file_size, file_type, uploaded_by, created_at, profiles(name)')
+      .eq('project_id', projektId)
+      .order('created_at', { ascending: false });
+    if (error) { console.error('Fejl ved load af filer:', error); return; }
+    setProjektFiler(data || []);
+  };
+
+  const uploadFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedProjekt) return;
+
+    setUploadingFile(true);
+    try {
+      // Upload til storage
+      const filePath = `${selectedProjekt.id}/${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('project-files')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Gem metadata i database
+      const { error: dbError } = await supabase.from('project_files').insert([{
+        project_id: selectedProjekt.id,
+        file_name: file.name,
+        file_path: filePath,
+        file_size: file.size,
+        file_type: file.type,
+        uploaded_by: user?.id
+      }]);
+
+      if (dbError) throw dbError;
+
+      loadProjektFiler(selectedProjekt.id);
+    } catch (err) {
+      alert('Fejl ved upload: ' + err.message);
+    } finally {
+      setUploadingFile(false);
+      event.target.value = '';
+    }
+  };
+
+  const downloadFile = async (fil) => {
+    const { data, error } = await supabase.storage
+      .from('project-files')
+      .download(fil.file_path);
+
+    if (error) { alert('Fejl ved download: ' + error.message); return; }
+
+    // Opret download link
+    const url = URL.createObjectURL(data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fil.file_name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const deleteFile = async (fil) => {
+    if (!confirm(`Slet "${fil.file_name}"?`)) return;
+
+    try {
+      // Slet fra storage
+      const { error: storageError } = await supabase.storage
+        .from('project-files')
+        .remove([fil.file_path]);
+
+      if (storageError) throw storageError;
+
+      // Slet fra database
+      const { error: dbError } = await supabase
+        .from('project_files')
+        .delete()
+        .eq('id', fil.id);
+
+      if (dbError) throw dbError;
+
+      loadProjektFiler(selectedProjekt.id);
+    } catch (err) {
+      alert('Fejl ved sletning: ' + err.message);
+    }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '-';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  const getFileIcon = (type) => {
+    if (!type) return '📄';
+    if (type.startsWith('image/')) return '🖼️';
+    if (type.includes('pdf')) return '📕';
+    if (type.includes('word') || type.includes('document')) return '📘';
+    if (type.includes('sheet') || type.includes('excel')) return '📗';
+    return '📄';
   };
 
   const saveProjekt = async (form) => {
@@ -907,6 +1023,93 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
             Ingen kunde tilknyttet dette projekt
           </div>
         )}
+
+        {/* Dokumenter */}
+        <div style={{ marginTop: 24, marginBottom: 16 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Dokumenter ({projektFiler.length})</h2>
+        </div>
+
+        <div style={{ ...STYLES.card }}>
+          {/* Upload sektion - kun for admin/sælger */}
+          {canManageFiles && (
+            <div style={{ marginBottom: projektFiler.length > 0 ? 20 : 0 }}>
+              <label style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                gap: 8,
+                padding: 16,
+                border: `2px dashed ${COLORS.border}`,
+                borderRadius: 12,
+                cursor: uploadingFile ? 'wait' : 'pointer',
+                background: COLORS.bg,
+                transition: 'border-color 0.2s'
+              }}>
+                <input 
+                  type="file" 
+                  onChange={uploadFile} 
+                  disabled={uploadingFile}
+                  style={{ display: 'none' }} 
+                />
+                {uploadingFile ? (
+                  <span style={{ color: COLORS.textLight }}>Uploader...</span>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 20 }}>📎</span>
+                    <span style={{ color: COLORS.primary, fontWeight: 500 }}>Klik for at uploade fil</span>
+                  </>
+                )}
+              </label>
+            </div>
+          )}
+
+          {/* Fil-liste */}
+          {projektFiler.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: canManageFiles ? 16 : 32, color: COLORS.textLight }}>
+              Ingen dokumenter uploadet
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {projektFiler.map(fil => (
+                <div key={fil.id} style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'space-between',
+                  padding: 12,
+                  background: COLORS.bg,
+                  borderRadius: 8
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 24 }}>{getFileIcon(fil.file_type)}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fil.file_name}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textLight }}>
+                        {formatFileSize(fil.file_size)} • {new Date(fil.created_at).toLocaleDateString('da-DK')}
+                        {fil.profiles?.name && ` • ${fil.profiles.name}`}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button 
+                      onClick={() => downloadFile(fil)} 
+                      style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}
+                    >
+                      Download
+                    </button>
+                    {canManageFiles && (
+                      <button 
+                        onClick={() => deleteFile(fil)} 
+                        style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}
+                      >
+                        Slet
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {showModal && (
           <Modal title="Rediger projekt" onClose={() => { setShowModal(false); setEditingProjekt(null); }}>
