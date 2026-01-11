@@ -81,16 +81,24 @@ export default function App() {
 
   if (loading) return <LoadingScreen />;
 
+  // State til at navigere til specifikt projekt fra kundesiden
+  const [selectedProjektId, setSelectedProjektId] = useState(null);
+
+  const navigateToProjekt = (projektId) => {
+    setSelectedProjektId(projektId);
+    setSection('projekter');
+  };
+
   return (
     <AuthContext.Provider value={{ user, profile, logout }}>
       <div style={{ minHeight: '100vh', background: COLORS.bg, fontFamily: "'Inter', -apple-system, sans-serif" }}>
         {!user ? <LoginPage /> : (
           <>
-            <Navigation section={section} setSection={setSection} />
+            <Navigation section={section} setSection={(s) => { setSection(s); setSelectedProjektId(null); }} />
             <main style={{ maxWidth: 1400, margin: '0 auto', padding: '24px' }}>
               {section === 'dashboard' && <Dashboard setSection={setSection} />}
-              {section === 'kunder' && <KunderSystem />}
-              {section === 'projekter' && <ProjekterSystem />}
+              {section === 'kunder' && <KunderSystem onNavigateToProjekt={navigateToProjekt} />}
+              {section === 'projekter' && <ProjekterSystem initialProjektId={selectedProjektId} onProjektOpened={() => setSelectedProjektId(null)} />}
               {section === 'indstillinger' && profile?.role === 'admin' && <IndstillingerSystem />}
             </main>
           </>
@@ -281,7 +289,7 @@ function StatCard({ icon, label, value, onClick }) {
 //           delivery_address, delivery_zip, delivery_city, notes, created_at
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-function KunderSystem() {
+function KunderSystem({ onNavigateToProjekt }) {
   const [kunder, setKunder] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingKunde, setEditingKunde] = useState(null);
@@ -478,9 +486,9 @@ function KunderSystem() {
               </tr></thead>
               <tbody>
                 {kundeProjekter.map(p => (
-                  <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                  <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer' }} onClick={() => onNavigateToProjekt && onNavigateToProjekt(p.id)}>
                     <td style={STYLES.td}>
-                      <div style={{ fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontWeight: 600, color: COLORS.primary }}>{p.name}</div>
                       {p.description && <div style={{ fontSize: 12, color: COLORS.textLight }}>{p.description}</div>}
                     </td>
                     <td style={STYLES.td}>{p.city || p.address || '-'}</td>
@@ -699,17 +707,35 @@ function KundeForm({ initial, onSave, onCancel }) {
 // Database: id, customer_id, name, description, address, zip, city, status, created_at, updated_at
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-function ProjekterSystem() {
+function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const [projekter, setProjekter] = useState([]);
   const [kunder, setKunder] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingProjekt, setEditingProjekt] = useState(null);
+  const [selectedProjekt, setSelectedProjekt] = useState(null);
+
+  // Søgning, filtrering, sortering
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('alle'); // alle, aktiv, afsluttet, annulleret
+  const [sortBy, setSortBy] = useState('created_at');
+  const [sortDir, setSortDir] = useState('desc');
 
   useEffect(() => { loadData(); }, []);
 
+  // Håndter navigation fra kundesiden
+  useEffect(() => {
+    if (initialProjektId && projekter.length > 0) {
+      const projekt = projekter.find(p => p.id === initialProjektId);
+      if (projekt) {
+        setSelectedProjekt(projekt);
+        if (onProjektOpened) onProjektOpened();
+      }
+    }
+  }, [initialProjektId, projekter]);
+
   const loadData = async () => {
     const [pRes, kRes] = await Promise.all([
-      supabase.from('projects').select('id, customer_id, name, description, address, zip, city, status, created_at, customers(name, company)').order('created_at', { ascending: false }),
+      supabase.from('projects').select('id, customer_id, name, description, address, zip, city, status, created_at, customers(id, name, company, email, phone)').order('created_at', { ascending: false }),
       supabase.from('customers').select('id, name, company')
     ]);
     if (pRes.error) { alert('Fejl: ' + pRes.error.message); return; }
@@ -745,19 +771,185 @@ function ProjekterSystem() {
     if (!confirm('Slet dette projekt?')) return;
     const { error } = await supabase.from('projects').delete().eq('id', id);
     if (error) { alert('Fejl: ' + error.message); return; }
+    if (selectedProjekt?.id === id) setSelectedProjekt(null);
     loadData();
   };
 
   const statusColors = { aktiv: { bg: '#D1FAE5', color: '#059669' }, afsluttet: { bg: '#DBEAFE', color: '#1D4ED8' }, annulleret: { bg: '#FEE2E2', color: '#DC2626' } };
+  const statusLabels = { aktiv: 'Aktiv', afsluttet: 'Afsluttet', annulleret: 'Annulleret' };
+
+  // Filtrering
+  let filteredProjekter = projekter.filter(p => {
+    if (filterStatus !== 'alle' && p.status !== filterStatus) return false;
+    return true;
+  });
+
+  // Søgning
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filteredProjekter = filteredProjekter.filter(p => 
+      (p.name || '').toLowerCase().includes(s) ||
+      (p.description || '').toLowerCase().includes(s) ||
+      (p.address || '').toLowerCase().includes(s) ||
+      (p.city || '').toLowerCase().includes(s) ||
+      (p.customers?.name || '').toLowerCase().includes(s) ||
+      (p.customers?.company || '').toLowerCase().includes(s)
+    );
+  }
+
+  // Sortering
+  filteredProjekter = [...filteredProjekter].sort((a, b) => {
+    let aVal, bVal;
+    if (sortBy === 'name') {
+      aVal = (a.name || '').toLowerCase();
+      bVal = (b.name || '').toLowerCase();
+    } else if (sortBy === 'kunde') {
+      aVal = (a.customers?.company || a.customers?.name || '').toLowerCase();
+      bVal = (b.customers?.company || b.customers?.name || '').toLowerCase();
+    } else if (sortBy === 'city') {
+      aVal = (a.city || '').toLowerCase();
+      bVal = (b.city || '').toLowerCase();
+    } else if (sortBy === 'status') {
+      aVal = a.status || '';
+      bVal = b.status || '';
+    } else {
+      aVal = a.created_at || '';
+      bVal = b.created_at || '';
+    }
+    if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+    if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDir('asc');
+    }
+  };
+
+  const SortHeader = ({ column, children }) => (
+    <th style={{ ...STYLES.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort(column)}>
+      {children} {sortBy === column && (sortDir === 'asc' ? '↑' : '↓')}
+    </th>
+  );
+
+  // Projekt-detaljevisning
+  if (selectedProjekt) {
+    const kunde = selectedProjekt.customers;
+    return (
+      <div>
+        <button onClick={() => setSelectedProjekt(null)} style={{ ...STYLES.secondaryBtn, marginBottom: 24 }}>← Tilbage til projekter</button>
+        
+        <div style={{ ...STYLES.card, marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{selectedProjekt.name}</h1>
+                <span style={{ 
+                  padding: '4px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                  background: statusColors[selectedProjekt.status]?.bg,
+                  color: statusColors[selectedProjekt.status]?.color
+                }}>{statusLabels[selectedProjekt.status]}</span>
+              </div>
+              {selectedProjekt.description && <p style={{ color: COLORS.textLight, marginTop: 8 }}>{selectedProjekt.description}</p>}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => { setEditingProjekt(selectedProjekt); setShowModal(true); }} style={STYLES.secondaryBtn}>Rediger</button>
+              <button onClick={() => deleteProjekt(selectedProjekt.id)} style={{ ...STYLES.secondaryBtn, color: COLORS.error }}>Slet</button>
+            </div>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 24, marginTop: 24 }}>
+            <div>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>PROJEKTADRESSE</div>
+              {selectedProjekt.address && <div>{selectedProjekt.address}</div>}
+              {(selectedProjekt.zip || selectedProjekt.city) && <div>{selectedProjekt.zip} {selectedProjekt.city}</div>}
+              {!selectedProjekt.address && !selectedProjekt.city && <div style={{ color: COLORS.textLight }}>Ingen adresse</div>}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>OPRETTET</div>
+              <div>{new Date(selectedProjekt.created_at).toLocaleDateString('da-DK', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Kunde-info */}
+        <div style={{ marginBottom: 16 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Kunde</h2>
+        </div>
+
+        {kunde ? (
+          <div style={{ ...STYLES.card }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 16 }}>{kunde.company || kunde.name}</div>
+                {kunde.company && <div style={{ color: COLORS.textLight, marginTop: 2 }}>{kunde.name}</div>}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginTop: 16 }}>
+              {kunde.email && (
+                <div>
+                  <div style={{ fontSize: 12, color: COLORS.textLight }}>EMAIL</div>
+                  <div>📧 {kunde.email}</div>
+                </div>
+              )}
+              {kunde.phone && (
+                <div>
+                  <div style={{ fontSize: 12, color: COLORS.textLight }}>TELEFON</div>
+                  <div>📞 {kunde.phone}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div style={{ ...STYLES.card, textAlign: 'center', padding: 32, color: COLORS.textLight }}>
+            Ingen kunde tilknyttet dette projekt
+          </div>
+        )}
+
+        {showModal && (
+          <Modal title="Rediger projekt" onClose={() => { setShowModal(false); setEditingProjekt(null); }}>
+            <ProjektForm initial={editingProjekt} kunder={kunder} onSave={(form) => { saveProjekt(form); loadData().then(() => { const updated = projekter.find(p => p.id === selectedProjekt.id); if (updated) setSelectedProjekt(updated); }); }} onCancel={() => { setShowModal(false); setEditingProjekt(null); }} />
+          </Modal>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Projekter</h1>
-          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{projekter.length} projekter</p>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filteredProjekter.length} af {projekter.length} projekter</p>
         </div>
         <button onClick={() => { setEditingProjekt(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Nyt projekt</button>
+      </div>
+
+      {/* Søgning og filtrering */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 300px' }}>
+            <input
+              type="text"
+              placeholder="🔍 Søg efter projektnavn, adresse, by eller kundenavn..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={STYLES.input}
+            />
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle status</option>
+              <option value="aktiv">Aktive</option>
+              <option value="afsluttet">Afsluttede</option>
+              <option value="annulleret">Annullerede</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {projekter.length === 0 ? (
@@ -766,21 +958,25 @@ function ProjekterSystem() {
           <h3>Ingen projekter endnu</h3>
           <button onClick={() => setShowModal(true)} style={{ ...STYLES.primaryBtn, marginTop: 16 }}>+ Opret projekt</button>
         </div>
+      ) : filteredProjekter.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48, color: COLORS.textLight }}>
+          Ingen projekter matcher søgningen
+        </div>
       ) : (
         <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr style={{ background: COLORS.bg }}>
-              <th style={STYLES.th}>Projekt</th>
-              <th style={STYLES.th}>Kunde</th>
-              <th style={STYLES.th}>Adresse</th>
-              <th style={STYLES.th}>Status</th>
+              <SortHeader column="name">Projekt</SortHeader>
+              <SortHeader column="kunde">Kunde</SortHeader>
+              <SortHeader column="city">Adresse</SortHeader>
+              <SortHeader column="status">Status</SortHeader>
               <th style={STYLES.th}></th>
             </tr></thead>
             <tbody>
-              {projekter.map(p => (
-                <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+              {filteredProjekter.map(p => (
+                <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer' }} onClick={() => setSelectedProjekt(p)}>
                   <td style={STYLES.td}>
-                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ fontWeight: 600, color: COLORS.primary }}>{p.name}</div>
                     {p.description && <div style={{ fontSize: 12, color: COLORS.textLight }}>{p.description}</div>}
                   </td>
                   <td style={STYLES.td}>{p.customers?.company || p.customers?.name || '-'}</td>
@@ -788,7 +984,7 @@ function ProjekterSystem() {
                   <td style={STYLES.td}>
                     <span style={{ padding: '4px 8px', borderRadius: 4, fontSize: 12, background: statusColors[p.status]?.bg, color: statusColors[p.status]?.color }}>{p.status}</span>
                   </td>
-                  <td style={STYLES.td}>
+                  <td style={STYLES.td} onClick={e => e.stopPropagation()}>
                     <button onClick={() => { setEditingProjekt(p); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', marginRight: 8 }}>Rediger</button>
                     <button onClick={() => deleteProjekt(p.id)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}>Slet</button>
                   </td>
