@@ -714,6 +714,11 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const [selectedProjekt, setSelectedProjekt] = useState(null);
   const [projektFiler, setProjektFiler] = useState([]);
   const [uploadingFile, setUploadingFile] = useState(false);
+  
+  // Tilbud state
+  const [tilbud, setTilbud] = useState([]);
+  const [showTilbudModal, setShowTilbudModal] = useState(false);
+  const [editingTilbud, setEditingTilbud] = useState(null);
 
   // Søgning, filtrering, sortering
   const [search, setSearch] = useState('');
@@ -721,8 +726,8 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const [sortBy, setSortBy] = useState('created_at');
   const [sortDir, setSortDir] = useState('desc');
 
-  // Rettigheder: admin, sælger og serviceleder må uploade/slette
-  const canManageFiles = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+  // Rettigheder: admin, sælger og serviceleder har skriveadgang
+  const canManage = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
 
   useEffect(() => { loadData(); }, []);
 
@@ -733,15 +738,17 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
       if (projekt) {
         setSelectedProjekt(projekt);
         loadProjektFiler(initialProjektId);
+        loadTilbud(initialProjektId);
         if (onProjektOpened) onProjektOpened();
       }
     }
   }, [initialProjektId, projekter]);
 
-  // Load filer når projekt vælges
+  // Load filer og tilbud når projekt vælges
   useEffect(() => {
     if (selectedProjekt) {
       loadProjektFiler(selectedProjekt.id);
+      loadTilbud(selectedProjekt.id);
     }
   }, [selectedProjekt?.id]);
 
@@ -855,6 +862,148 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     if (type.includes('word') || type.includes('document')) return '📘';
     if (type.includes('sheet') || type.includes('excel')) return '📗';
     return '📄';
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+  // TILBUD FUNKTIONER
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+
+  const loadTilbud = async (projektId) => {
+    const { data, error } = await supabase
+      .from('quotes')
+      .select('*')
+      .eq('project_id', projektId)
+      .order('created_at', { ascending: false });
+    if (error) { console.error('Fejl ved load af tilbud:', error); return; }
+    setTilbud(data || []);
+  };
+
+  const saveTilbud = async (form) => {
+    const payload = {
+      project_id: selectedProjekt.id,
+      title: form.title,
+      description: form.description || null,
+      total_price: parseFloat(form.total_price) || 0,
+      status: form.status || 'kladde',
+      updated_at: new Date().toISOString()
+    };
+
+    if (editingTilbud) {
+      const { error } = await supabase.from('quotes').update(payload).eq('id', editingTilbud.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    } else {
+      const { error } = await supabase.from('quotes').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    }
+    setShowTilbudModal(false);
+    setEditingTilbud(null);
+    loadTilbud(selectedProjekt.id);
+  };
+
+  const deleteTilbud = async (t) => {
+    if (!confirm(`Slet tilbud "${t.title}"?`)) return;
+    const { error } = await supabase.from('quotes').delete().eq('id', t.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadTilbud(selectedProjekt.id);
+  };
+
+  const downloadTilbudPDF = (t) => {
+    const kunde = selectedProjekt.customers;
+    
+    // Simpel PDF generation med jsPDF
+    const { jsPDF } = window.jspdf || {};
+    if (!jsPDF) {
+      // Fallback: Åbn print dialog med HTML
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Tilbud - ${t.title}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
+            h1 { color: #1E3A5F; border-bottom: 2px solid #1E3A5F; padding-bottom: 10px; }
+            .header { margin-bottom: 30px; }
+            .section { margin-bottom: 20px; }
+            .label { color: #666; font-size: 12px; margin-bottom: 4px; }
+            .value { font-size: 14px; }
+            .price { font-size: 24px; font-weight: bold; color: #059669; }
+            .description { white-space: pre-wrap; background: #f5f5f5; padding: 15px; border-radius: 8px; }
+            .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
+            .status { display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 12px; }
+            .status-kladde { background: #FEF3C7; color: #92400E; }
+            .status-sendt { background: #DBEAFE; color: #1D4ED8; }
+            .status-accepteret { background: #D1FAE5; color: #059669; }
+            .status-afvist { background: #FEE2E2; color: #DC2626; }
+            @media print { body { padding: 20px; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>TILBUD</h1>
+            <div class="section">
+              <div class="label">TILBUDSNUMMER</div>
+              <div class="value">${t.id.slice(0, 8).toUpperCase()}</div>
+            </div>
+          </div>
+          
+          <div class="section">
+            <div class="label">KUNDE</div>
+            <div class="value">${kunde?.company || kunde?.name || 'Ingen kunde'}</div>
+            ${kunde?.name && kunde?.company ? `<div class="value">${kunde.name}</div>` : ''}
+            ${kunde?.email ? `<div class="value">${kunde.email}</div>` : ''}
+            ${kunde?.phone ? `<div class="value">${kunde.phone}</div>` : ''}
+          </div>
+          
+          <div class="section">
+            <div class="label">PROJEKT</div>
+            <div class="value">${selectedProjekt.name}</div>
+            ${selectedProjekt.address ? `<div class="value">${selectedProjekt.address}, ${selectedProjekt.zip || ''} ${selectedProjekt.city || ''}</div>` : ''}
+          </div>
+          
+          <div class="section">
+            <div class="label">TILBUD</div>
+            <div class="value" style="font-size: 18px; font-weight: bold;">${t.title}</div>
+            <span class="status status-${t.status}">${t.status.charAt(0).toUpperCase() + t.status.slice(1)}</span>
+          </div>
+          
+          ${t.description ? `
+          <div class="section">
+            <div class="label">BESKRIVELSE</div>
+            <div class="description">${t.description}</div>
+          </div>
+          ` : ''}
+          
+          <div class="section">
+            <div class="label">TOTALPRIS</div>
+            <div class="price">${Number(t.total_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+          </div>
+          
+          <div class="footer">
+            <div>Dato: ${new Date(t.created_at).toLocaleDateString('da-DK', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+            <div>EltaSolar • CVR: XXXXXXXX</div>
+          </div>
+        </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+      return;
+    }
+  };
+
+  const tilbudStatusColors = {
+    kladde: { bg: '#FEF3C7', color: '#92400E' },
+    sendt: { bg: '#DBEAFE', color: '#1D4ED8' },
+    accepteret: { bg: '#D1FAE5', color: '#059669' },
+    afvist: { bg: '#FEE2E2', color: '#DC2626' }
+  };
+
+  const tilbudStatusLabels = {
+    kladde: 'Kladde',
+    sendt: 'Sendt',
+    accepteret: 'Accepteret',
+    afvist: 'Afvist'
   };
 
   const saveProjekt = async (form) => {
@@ -1031,7 +1180,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
 
         <div style={{ ...STYLES.card }}>
           {/* Upload sektion - kun for admin/sælger */}
-          {canManageFiles && (
+          {canManage && (
             <div style={{ marginBottom: projektFiler.length > 0 ? 20 : 0 }}>
               <label style={{ 
                 display: 'flex', 
@@ -1065,7 +1214,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
 
           {/* Fil-liste */}
           {projektFiler.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: canManageFiles ? 16 : 32, color: COLORS.textLight }}>
+            <div style={{ textAlign: 'center', padding: canManage ? 16 : 32, color: COLORS.textLight }}>
               Ingen dokumenter uploadet
             </div>
           ) : (
@@ -1096,7 +1245,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
                     >
                       Download
                     </button>
-                    {canManageFiles && (
+                    {canManage && (
                       <button 
                         onClick={() => deleteFile(fil)} 
                         style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}
@@ -1111,9 +1260,86 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
           )}
         </div>
 
+        {/* Tilbud sektion */}
+        <div style={{ marginTop: 24, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>🧾 Tilbud ({tilbud.length})</h2>
+          {canManage && (
+            <button onClick={() => { setEditingTilbud(null); setShowTilbudModal(true); }} style={STYLES.primaryBtn}>+ Opret tilbud</button>
+          )}
+        </div>
+
+        <div style={{ ...STYLES.card }}>
+          {tilbud.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>
+              Ingen tilbud på dette projekt
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {tilbud.map(t => (
+                <div key={t.id} style={{ 
+                  padding: 16,
+                  background: COLORS.bg,
+                  borderRadius: 8,
+                  border: `1px solid ${COLORS.border}`
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 16 }}>{t.title}</div>
+                      <span style={{ 
+                        display: 'inline-block',
+                        padding: '2px 8px', 
+                        borderRadius: 4, 
+                        fontSize: 11, 
+                        fontWeight: 600,
+                        marginTop: 4,
+                        background: tilbudStatusColors[t.status]?.bg,
+                        color: tilbudStatusColors[t.status]?.color
+                      }}>{tilbudStatusLabels[t.status]}</span>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: COLORS.primary }}>
+                        {Number(t.total_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+                      </div>
+                      <div style={{ fontSize: 12, color: COLORS.textLight }}>
+                        {new Date(t.created_at).toLocaleDateString('da-DK')}
+                      </div>
+                    </div>
+                  </div>
+                  {t.description && (
+                    <div style={{ fontSize: 13, color: COLORS.textLight, marginBottom: 12, whiteSpace: 'pre-wrap' }}>
+                      {t.description.length > 150 ? t.description.slice(0, 150) + '...' : t.description}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button onClick={() => downloadTilbudPDF(t)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}>
+                      📄 Download PDF
+                    </button>
+                    {canManage && (
+                      <>
+                        <button onClick={() => { setEditingTilbud(t); setShowTilbudModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px' }}>
+                          Rediger
+                        </button>
+                        <button onClick={() => deleteTilbud(t)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}>
+                          Slet
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {showModal && (
           <Modal title="Rediger projekt" onClose={() => { setShowModal(false); setEditingProjekt(null); }}>
             <ProjektForm initial={editingProjekt} kunder={kunder} onSave={(form) => { saveProjekt(form); loadData().then(() => { const updated = projekter.find(p => p.id === selectedProjekt.id); if (updated) setSelectedProjekt(updated); }); }} onCancel={() => { setShowModal(false); setEditingProjekt(null); }} />
+          </Modal>
+        )}
+
+        {showTilbudModal && (
+          <Modal title={editingTilbud ? 'Rediger tilbud' : 'Nyt tilbud'} onClose={() => { setShowTilbudModal(false); setEditingTilbud(null); }}>
+            <TilbudForm initial={editingTilbud} onSave={saveTilbud} onCancel={() => { setShowTilbudModal(false); setEditingTilbud(null); }} />
           </Modal>
         )}
       </div>
@@ -1263,6 +1489,75 @@ function ProjektForm({ initial, kunder, onSave, onCancel }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
         <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret projekt'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// TILBUD FORM
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function TilbudForm({ initial, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id: initial?.id || null,
+    title: initial?.title || '',
+    description: initial?.description || '',
+    total_price: initial?.total_price || '',
+    status: initial?.status || 'kladde'
+  });
+
+  const handleSubmit = () => {
+    if (!form.title.trim()) { alert('Titel er påkrævet'); return; }
+    onSave(form);
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div>
+        <label style={STYLES.label}>Titel *</label>
+        <input 
+          value={form.title} 
+          onChange={e => setForm({ ...form, title: e.target.value })} 
+          style={STYLES.input} 
+          placeholder="F.eks. Solcelleanlæg 10kW" 
+        />
+      </div>
+      <div>
+        <label style={STYLES.label}>Beskrivelse</label>
+        <textarea 
+          value={form.description} 
+          onChange={e => setForm({ ...form, description: e.target.value })} 
+          style={{ ...STYLES.input, minHeight: 120, resize: 'vertical' }} 
+          placeholder="Detaljeret beskrivelse af tilbuddet..."
+        />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Totalpris (kr.)</label>
+          <input 
+            type="number" 
+            value={form.total_price} 
+            onChange={e => setForm({ ...form, total_price: e.target.value })} 
+            style={STYLES.input} 
+            placeholder="0.00"
+            step="0.01"
+            min="0"
+          />
+        </div>
+        <div>
+          <label style={STYLES.label}>Status</label>
+          <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} style={STYLES.select}>
+            <option value="kladde">Kladde</option>
+            <option value="sendt">Sendt</option>
+            <option value="accepteret">Accepteret</option>
+            <option value="afvist">Afvist</option>
+          </select>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret tilbud'}</button>
       </div>
     </div>
   );
