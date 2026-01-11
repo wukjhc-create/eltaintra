@@ -285,6 +285,14 @@ function KunderSystem() {
   const [kunder, setKunder] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingKunde, setEditingKunde] = useState(null);
+  const [selectedKunde, setSelectedKunde] = useState(null);
+  const [kundeProjekter, setKundeProjekter] = useState([]);
+  
+  // Søgning, filtrering, sortering
+  const [search, setSearch] = useState('');
+  const [filterBy, setFilterBy] = useState('alle'); // alle, med-email, uden-email
+  const [sortBy, setSortBy] = useState('created_at');
+  const [sortDir, setSortDir] = useState('desc');
 
   useEffect(() => { loadKunder(); }, []);
 
@@ -295,6 +303,21 @@ function KunderSystem() {
       .order('created_at', { ascending: false });
     if (error) { alert('Fejl: ' + error.message); return; }
     setKunder(data || []);
+  };
+
+  const loadKundeProjekter = async (kundeId) => {
+    const { data, error } = await supabase
+      .from('projects')
+      .select('id, name, description, address, city, status, created_at')
+      .eq('customer_id', kundeId)
+      .order('created_at', { ascending: false });
+    if (error) { console.error(error); return; }
+    setKundeProjekter(data || []);
+  };
+
+  const selectKunde = (kunde) => {
+    setSelectedKunde(kunde);
+    loadKundeProjekter(kunde.id);
   };
 
   const saveKunde = async (form) => {
@@ -329,17 +352,192 @@ function KunderSystem() {
     if (!confirm('Slet denne kunde?')) return;
     const { error } = await supabase.from('customers').delete().eq('id', id);
     if (error) { alert('Fejl: ' + error.message); return; }
+    if (selectedKunde?.id === id) setSelectedKunde(null);
     loadKunder();
   };
+
+  // Filtrering
+  let filteredKunder = kunder.filter(k => {
+    if (filterBy === 'med-email' && !k.email) return false;
+    if (filterBy === 'uden-email' && k.email) return false;
+    return true;
+  });
+
+  // Søgning
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filteredKunder = filteredKunder.filter(k => 
+      (k.name || '').toLowerCase().includes(s) ||
+      (k.company || '').toLowerCase().includes(s) ||
+      (k.email || '').toLowerCase().includes(s) ||
+      (k.phone || '').includes(s) ||
+      (k.city || '').toLowerCase().includes(s) ||
+      (k.cvr || '').includes(s)
+    );
+  }
+
+  // Sortering
+  filteredKunder = [...filteredKunder].sort((a, b) => {
+    let aVal, bVal;
+    if (sortBy === 'name') {
+      aVal = (a.company || a.name || '').toLowerCase();
+      bVal = (b.company || b.name || '').toLowerCase();
+    } else if (sortBy === 'city') {
+      aVal = (a.city || '').toLowerCase();
+      bVal = (b.city || '').toLowerCase();
+    } else if (sortBy === 'email') {
+      aVal = (a.email || '').toLowerCase();
+      bVal = (b.email || '').toLowerCase();
+    } else {
+      aVal = a.created_at || '';
+      bVal = b.created_at || '';
+    }
+    if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+    if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDir('asc');
+    }
+  };
+
+  const SortHeader = ({ column, children }) => (
+    <th style={{ ...STYLES.th, cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort(column)}>
+      {children} {sortBy === column && (sortDir === 'asc' ? '↑' : '↓')}
+    </th>
+  );
+
+  // Hvis en kunde er valgt, vis kundedetaljer
+  if (selectedKunde) {
+    return (
+      <div>
+        <button onClick={() => setSelectedKunde(null)} style={{ ...STYLES.secondaryBtn, marginBottom: 24 }}>← Tilbage til kunder</button>
+        
+        <div style={{ ...STYLES.card, marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{selectedKunde.company || selectedKunde.name}</h1>
+              {selectedKunde.company && <p style={{ color: COLORS.textLight, marginTop: 4 }}>{selectedKunde.name}</p>}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => { setEditingKunde(selectedKunde); setShowModal(true); }} style={STYLES.secondaryBtn}>Rediger</button>
+              <button onClick={() => deleteKunde(selectedKunde.id)} style={{ ...STYLES.secondaryBtn, color: COLORS.error }}>Slet</button>
+            </div>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24, marginTop: 24 }}>
+            <div>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>KONTAKT</div>
+              {selectedKunde.email && <div style={{ marginBottom: 4 }}>📧 {selectedKunde.email}</div>}
+              {selectedKunde.phone && <div>📞 {selectedKunde.phone}</div>}
+              {!selectedKunde.email && !selectedKunde.phone && <div style={{ color: COLORS.textLight }}>Ingen kontaktinfo</div>}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>ADRESSE</div>
+              {selectedKunde.address && <div>{selectedKunde.address}</div>}
+              {(selectedKunde.zip || selectedKunde.city) && <div>{selectedKunde.zip} {selectedKunde.city}</div>}
+              {!selectedKunde.address && !selectedKunde.city && <div style={{ color: COLORS.textLight }}>Ingen adresse</div>}
+            </div>
+            {selectedKunde.cvr && (
+              <div>
+                <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>CVR</div>
+                <div>{selectedKunde.cvr}</div>
+              </div>
+            )}
+          </div>
+          
+          {selectedKunde.notes && (
+            <div style={{ marginTop: 24, padding: 16, background: COLORS.bg, borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>NOTER</div>
+              <div>{selectedKunde.notes}</div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Projekter ({kundeProjekter.length})</h2>
+        </div>
+
+        {kundeProjekter.length === 0 ? (
+          <div style={{ ...STYLES.card, textAlign: 'center', padding: 32, color: COLORS.textLight }}>
+            Ingen projekter for denne kunde
+          </div>
+        ) : (
+          <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Projekt</th>
+                <th style={STYLES.th}>Adresse</th>
+                <th style={STYLES.th}>Status</th>
+                <th style={STYLES.th}>Oprettet</th>
+              </tr></thead>
+              <tbody>
+                {kundeProjekter.map(p => (
+                  <tr key={p.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={STYLES.td}>
+                      <div style={{ fontWeight: 600 }}>{p.name}</div>
+                      {p.description && <div style={{ fontSize: 12, color: COLORS.textLight }}>{p.description}</div>}
+                    </td>
+                    <td style={STYLES.td}>{p.city || p.address || '-'}</td>
+                    <td style={STYLES.td}>
+                      <span style={{ 
+                        padding: '4px 8px', borderRadius: 4, fontSize: 12,
+                        background: p.status === 'aktiv' ? '#D1FAE5' : p.status === 'afsluttet' ? '#DBEAFE' : '#FEE2E2',
+                        color: p.status === 'aktiv' ? '#059669' : p.status === 'afsluttet' ? '#1D4ED8' : '#DC2626'
+                      }}>{p.status}</span>
+                    </td>
+                    <td style={STYLES.td}>{new Date(p.created_at).toLocaleDateString('da-DK')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {showModal && (
+          <Modal title="Rediger kunde" onClose={() => { setShowModal(false); setEditingKunde(null); }}>
+            <KundeForm initial={editingKunde} onSave={(form) => { saveKunde(form); setSelectedKunde({ ...selectedKunde, ...form }); }} onCancel={() => { setShowModal(false); setEditingKunde(null); }} />
+          </Modal>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Kunder</h1>
-          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{kunder.length} kunder</p>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filteredKunder.length} af {kunder.length} kunder</p>
         </div>
         <button onClick={() => { setEditingKunde(null); setShowModal(true); }} style={STYLES.primaryBtn}>+ Ny kunde</button>
+      </div>
+
+      {/* Søgning og filtrering */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 300px' }}>
+            <input
+              type="text"
+              placeholder="🔍 Søg efter navn, firma, email, telefon, by eller CVR..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={STYLES.input}
+            />
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterBy} onChange={e => setFilterBy(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle kunder</option>
+              <option value="med-email">Med email</option>
+              <option value="uden-email">Uden email</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {kunder.length === 0 ? (
@@ -348,27 +546,31 @@ function KunderSystem() {
           <h3>Ingen kunder endnu</h3>
           <button onClick={() => setShowModal(true)} style={{ ...STYLES.primaryBtn, marginTop: 16 }}>+ Opret kunde</button>
         </div>
+      ) : filteredKunder.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48, color: COLORS.textLight }}>
+          Ingen kunder matcher søgningen
+        </div>
       ) : (
         <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr style={{ background: COLORS.bg }}>
-              <th style={STYLES.th}>Navn</th>
-              <th style={STYLES.th}>Email</th>
+              <SortHeader column="name">Navn</SortHeader>
+              <SortHeader column="email">Email</SortHeader>
               <th style={STYLES.th}>Telefon</th>
-              <th style={STYLES.th}>By</th>
+              <SortHeader column="city">By</SortHeader>
               <th style={STYLES.th}></th>
             </tr></thead>
             <tbody>
-              {kunder.map(k => (
-                <tr key={k.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+              {filteredKunder.map(k => (
+                <tr key={k.id} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer' }} onClick={() => selectKunde(k)}>
                   <td style={STYLES.td}>
-                    <div style={{ fontWeight: 600 }}>{k.company || k.name}</div>
+                    <div style={{ fontWeight: 600, color: COLORS.primary }}>{k.company || k.name}</div>
                     {k.company && <div style={{ fontSize: 12, color: COLORS.textLight }}>{k.name}</div>}
                   </td>
                   <td style={STYLES.td}>{k.email || '-'}</td>
                   <td style={STYLES.td}>{k.phone || '-'}</td>
                   <td style={STYLES.td}>{k.city || '-'}</td>
-                  <td style={STYLES.td}>
+                  <td style={STYLES.td} onClick={e => e.stopPropagation()}>
                     <button onClick={() => { setEditingKunde(k); setShowModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', marginRight: 8 }}>Rediger</button>
                     <button onClick={() => deleteKunde(k.id)} style={{ ...STYLES.secondaryBtn, padding: '6px 12px', color: COLORS.error }}>Slet</button>
                   </td>
