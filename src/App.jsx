@@ -98,6 +98,7 @@ export default function App() {
               {section === 'kunder' && <KunderSystem onNavigateToProjekt={navigateToProjekt} />}
               {section === 'projekter' && <ProjekterSystem initialProjektId={selectedProjektId} onProjektOpened={() => setSelectedProjektId(null)} />}
               {section === 'ordrer' && <OrdreSystem />}
+              {section === 'mineopgaver' && profile?.role === 'montoer' && <MineOpgaverSystem />}
               {section === 'pakker' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <PakkerSystem />}
               {section === 'katalog' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <VarekatalogSystem />}
               {section === 'indstillinger' && profile?.role === 'admin' && <IndstillingerSystem />}
@@ -152,12 +153,14 @@ function Navigation({ section, setSection }) {
   const { profile, logout } = useAuth();
   const isAdmin = profile?.role === 'admin';
   const canManage = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+  const isMontoer = profile?.role === 'montoer';
   
   const menuItems = [
     { id: 'dashboard', label: 'Overblik', icon: '📊' },
     { id: 'kunder', label: 'Kunder', icon: '👥' },
     { id: 'projekter', label: 'Projekter', icon: '🔧' },
     { id: 'ordrer', label: 'Ordrer', icon: '🏗️' },
+    { id: 'mineopgaver', label: 'Mine opgaver', icon: '✅', montoerOnly: true },
     { id: 'pakker', label: 'Pakker', icon: '📦', managerOnly: true },
     { id: 'katalog', label: 'Varekatalog', icon: '🏷️', managerOnly: true },
     { id: 'indstillinger', label: 'Indstillinger', icon: '⚙️', adminOnly: true },
@@ -172,7 +175,7 @@ function Navigation({ section, setSection }) {
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {menuItems.map(item => (
-            (!item.adminOnly || isAdmin) && (!item.managerOnly || canManage) && (
+            (!item.adminOnly || isAdmin) && (!item.managerOnly || canManage) && (!item.montoerOnly || isMontoer) && (
               <button key={item.id} onClick={() => setSection(item.id)} style={{
                 background: section === item.id ? COLORS.primary : 'transparent',
                 color: section === item.id ? 'white' : COLORS.text,
@@ -2426,14 +2429,21 @@ function OrdreSystem() {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('alle');
   const [marginSettings, setMarginSettings] = useState(null);
+  
+  // Tasks state
+  const [tasks, setTasks] = useState([]);
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [montoerer, setMontoerer] = useState([]);
 
   // Rettigheder
   const isAdmin = profile?.role === 'admin';
   const canEditOrdre = profile?.role === 'admin' || profile?.role === 'serviceleder';
   const canChangeStatus = profile?.role === 'admin' || profile?.role === 'serviceleder' || profile?.role === 'montoer';
   const canViewEconomy = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+  const canManageTasks = profile?.role === 'admin' || profile?.role === 'serviceleder';
 
-  useEffect(() => { loadOrdrer(); loadMarginSettings(); }, []);
+  useEffect(() => { loadOrdrer(); loadMarginSettings(); loadMontoerer(); }, []);
 
   const loadOrdrer = async () => {
     const { data, error } = await supabase
@@ -2464,9 +2474,86 @@ function OrdreSystem() {
     setOrdreLinjer(data || []);
   };
 
+  const loadTasks = async (ordreId) => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*, profiles:assigned_to(id, name)')
+      .eq('order_id', ordreId)
+      .order('planned_date', { ascending: true });
+    if (error) { console.error('Fejl:', error); return; }
+    setTasks(data || []);
+  };
+
+  const loadMontoerer = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, name, role')
+      .in('role', ['montoer', 'serviceleder', 'admin'])
+      .eq('active', true);
+    setMontoerer(data || []);
+  };
+
   useEffect(() => {
-    if (selectedOrdre) loadOrdreLinjer(selectedOrdre.id);
+    if (selectedOrdre) {
+      loadOrdreLinjer(selectedOrdre.id);
+      loadTasks(selectedOrdre.id);
+    }
   }, [selectedOrdre?.id]);
+
+  const saveTask = async (form) => {
+    const payload = {
+      order_id: selectedOrdre.id,
+      title: form.title,
+      description: form.description || null,
+      assigned_to: form.assigned_to || null,
+      status: form.status || 'planlagt',
+      planned_date: form.planned_date || null
+    };
+
+    if (editingTask) {
+      const { error } = await supabase.from('tasks').update(payload).eq('id', editingTask.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    } else {
+      payload.created_by = user?.id;
+      const { error } = await supabase.from('tasks').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    }
+    setShowTaskModal(false);
+    setEditingTask(null);
+    loadTasks(selectedOrdre.id);
+  };
+
+  const deleteTask = async (task) => {
+    if (!confirm(`Slet opgave "${task.title}"?`)) return;
+    const { error } = await supabase.from('tasks').delete().eq('id', task.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadTasks(selectedOrdre.id);
+  };
+
+  const updateTaskStatus = async (task, newStatus) => {
+    const updates = { status: newStatus };
+    if (newStatus === 'igang' && !task.started_at) {
+      updates.started_at = new Date().toISOString();
+    }
+    if (newStatus === 'afsluttet' && !task.finished_at) {
+      updates.finished_at = new Date().toISOString();
+    }
+    const { error } = await supabase.from('tasks').update(updates).eq('id', task.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadTasks(selectedOrdre.id);
+  };
+
+  const taskStatusColors = {
+    planlagt: { bg: '#DBEAFE', color: '#1D4ED8' },
+    igang: { bg: '#FEF3C7', color: '#D97706' },
+    afsluttet: { bg: '#D1FAE5', color: '#059669' }
+  };
+
+  const taskStatusLabels = {
+    planlagt: 'Planlagt',
+    igang: 'I gang',
+    afsluttet: 'Afsluttet'
+  };
 
   const updateOrdreStatus = async (ordre, newStatus) => {
     const statusFlow = ['oprettet', 'planlagt', 'igang', 'afsluttet', 'faktureret'];
@@ -2715,6 +2802,70 @@ function OrdreSystem() {
             </table>
           )}
         </div>
+
+        {/* Opgaver sektion - kun for admin/serviceleder */}
+        {canManageTasks && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 32, marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>✅ Opgaver ({tasks.length})</h2>
+              <button onClick={() => { setEditingTask(null); setShowTaskModal(true); }} style={STYLES.primaryBtn}>+ Ny opgave</button>
+            </div>
+
+            <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+              {tasks.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>Ingen opgaver på denne ordre</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ background: COLORS.bg }}>
+                    <th style={STYLES.th}>Opgave</th>
+                    <th style={STYLES.th}>Tildelt</th>
+                    <th style={STYLES.th}>Dato</th>
+                    <th style={STYLES.th}>Status</th>
+                    <th style={STYLES.th}></th>
+                  </tr></thead>
+                  <tbody>
+                    {tasks.map(t => (
+                      <tr key={t.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                        <td style={STYLES.td}>
+                          <div style={{ fontWeight: 500 }}>{t.title}</div>
+                          {t.description && <div style={{ fontSize: 12, color: COLORS.textLight }}>{t.description}</div>}
+                        </td>
+                        <td style={STYLES.td}>{t.profiles?.name || '-'}</td>
+                        <td style={STYLES.td}>{t.planned_date ? new Date(t.planned_date).toLocaleDateString('da-DK') : '-'}</td>
+                        <td style={STYLES.td}>
+                          <span style={{ 
+                            padding: '4px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                            background: taskStatusColors[t.status]?.bg,
+                            color: taskStatusColors[t.status]?.color
+                          }}>{taskStatusLabels[t.status]}</span>
+                        </td>
+                        <td style={STYLES.td}>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            {t.status === 'planlagt' && (
+                              <button onClick={() => updateTaskStatus(t, 'igang')} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>▶️ Start</button>
+                            )}
+                            {t.status === 'igang' && (
+                              <button onClick={() => updateTaskStatus(t, 'afsluttet')} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>✅ Afslut</button>
+                            )}
+                            <button onClick={() => { setEditingTask(t); setShowTaskModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>Ret</button>
+                            <button onClick={() => deleteTask(t)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>Slet</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Task Modal */}
+        {showTaskModal && (
+          <Modal title={editingTask ? 'Rediger opgave' : 'Ny opgave'} onClose={() => { setShowTaskModal(false); setEditingTask(null); }}>
+            <TaskForm initial={editingTask} montoerer={montoerer} onSave={saveTask} onCancel={() => { setShowTaskModal(false); setEditingTask(null); }} />
+          </Modal>
+        )}
       </div>
     );
   }
@@ -2793,6 +2944,187 @@ function OrdreSystem() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// TaskForm component
+function TaskForm({ initial, montoerer, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    title: initial?.title || '',
+    description: initial?.description || '',
+    assigned_to: initial?.assigned_to || '',
+    status: initial?.status || 'planlagt',
+    planned_date: initial?.planned_date || ''
+  });
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div>
+        <label style={STYLES.label}>Opgavetitel *</label>
+        <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={STYLES.input} placeholder="F.eks. Montering af solpaneler" />
+      </div>
+      <div>
+        <label style={STYLES.label}>Beskrivelse</label>
+        <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} style={{ ...STYLES.input, minHeight: 80 }} placeholder="Detaljer om opgaven..." />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Tildel til</label>
+          <select value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })} style={STYLES.select}>
+            <option value="">Ikke tildelt</option>
+            {montoerer.map(m => (
+              <option key={m.id} value={m.id}>{m.name} ({m.role === 'montoer' ? 'Montør' : m.role === 'serviceleder' ? 'Serviceleder' : 'Admin'})</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={STYLES.label}>Planlagt dato</label>
+          <input type="date" value={form.planned_date} onChange={e => setForm({ ...form, planned_date: e.target.value })} style={STYLES.input} />
+        </div>
+      </div>
+      {initial && (
+        <div>
+          <label style={STYLES.label}>Status</label>
+          <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} style={STYLES.select}>
+            <option value="planlagt">Planlagt</option>
+            <option value="igang">I gang</option>
+            <option value="afsluttet">Afsluttet</option>
+          </select>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={() => { if (!form.title) { alert('Titel er påkrævet'); return; } onSave(form); }} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret opgave'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// MINE OPGAVER SYSTEM (Kun for montører)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function MineOpgaverSystem() {
+  const { user, profile } = useAuth();
+  const [opgaver, setOpgaver] = useState([]);
+  const [filterStatus, setFilterStatus] = useState('aktive');
+
+  useEffect(() => { loadMineOpgaver(); }, []);
+
+  const loadMineOpgaver = async () => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select(`
+        *,
+        orders(id, order_number, title, projects(name), customers(name, company))
+      `)
+      .eq('assigned_to', user?.id)
+      .order('planned_date', { ascending: true });
+    if (error) { console.error('Fejl:', error); return; }
+    setOpgaver(data || []);
+  };
+
+  const updateStatus = async (opgave, newStatus) => {
+    const updates = { status: newStatus };
+    if (newStatus === 'igang' && !opgave.started_at) {
+      updates.started_at = new Date().toISOString();
+    }
+    if (newStatus === 'afsluttet' && !opgave.finished_at) {
+      updates.finished_at = new Date().toISOString();
+    }
+    const { error } = await supabase.from('tasks').update(updates).eq('id', opgave.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadMineOpgaver();
+  };
+
+  const statusColors = {
+    planlagt: { bg: '#DBEAFE', color: '#1D4ED8' },
+    igang: { bg: '#FEF3C7', color: '#D97706' },
+    afsluttet: { bg: '#D1FAE5', color: '#059669' }
+  };
+
+  const statusLabels = {
+    planlagt: 'Planlagt',
+    igang: 'I gang',
+    afsluttet: 'Afsluttet'
+  };
+
+  // Filtrering
+  let filtered = opgaver;
+  if (filterStatus === 'aktive') {
+    filtered = opgaver.filter(o => o.status !== 'afsluttet');
+  } else if (filterStatus !== 'alle') {
+    filtered = opgaver.filter(o => o.status === filterStatus);
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Mine opgaver</h1>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filtered.length} opgave{filtered.length !== 1 ? 'r' : ''}</p>
+        </div>
+      </div>
+
+      {/* Filtrering */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={STYLES.select}>
+          <option value="aktive">Aktive (ikke afsluttede)</option>
+          <option value="alle">Alle opgaver</option>
+          <option value="planlagt">Kun planlagte</option>
+          <option value="igang">Kun i gang</option>
+          <option value="afsluttet">Kun afsluttede</option>
+        </select>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48, color: COLORS.textLight }}>
+          {opgaver.length === 0 ? 'Du har ingen tildelte opgaver' : 'Ingen opgaver matcher filteret'}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {filtered.map(o => (
+            <div key={o.id} style={{ ...STYLES.card }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                    <span style={{ 
+                      padding: '4px 10px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+                      background: statusColors[o.status]?.bg,
+                      color: statusColors[o.status]?.color
+                    }}>{statusLabels[o.status]}</span>
+                    {o.planned_date && (
+                      <span style={{ fontSize: 13, color: COLORS.textLight }}>
+                        📅 {new Date(o.planned_date).toLocaleDateString('da-DK')}
+                      </span>
+                    )}
+                  </div>
+                  <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{o.title}</h3>
+                  {o.description && <p style={{ color: COLORS.textLight, marginTop: 8, marginBottom: 0 }}>{o.description}</p>}
+                  <div style={{ marginTop: 12, fontSize: 13, color: COLORS.textLight }}>
+                    {o.orders && (
+                      <>
+                        <span>🏗️ Ordre #{o.orders.order_number}: {o.orders.title}</span>
+                        {o.orders.customers && <span> • 👤 {o.orders.customers.company || o.orders.customers.name}</span>}
+                        {o.orders.projects && <span> • 🔧 {o.orders.projects.name}</span>}
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {o.status === 'planlagt' && (
+                    <button onClick={() => updateStatus(o, 'igang')} style={{ ...STYLES.primaryBtn, background: '#D97706' }}>▶️ Start</button>
+                  )}
+                  {o.status === 'igang' && (
+                    <button onClick={() => updateStatus(o, 'afsluttet')} style={{ ...STYLES.primaryBtn, background: '#059669' }}>✅ Afslut</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
