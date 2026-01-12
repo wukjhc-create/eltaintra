@@ -2435,6 +2435,12 @@ function OrdreSystem() {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [montoerer, setMontoerer] = useState([]);
+  
+  // Materials state
+  const [materials, setMaterials] = useState([]);
+  const [showMaterialModal, setShowMaterialModal] = useState(false);
+  const [editingMaterial, setEditingMaterial] = useState(null);
+  const [produkter, setProdukter] = useState([]);
 
   // Rettigheder
   const isAdmin = profile?.role === 'admin';
@@ -2442,8 +2448,9 @@ function OrdreSystem() {
   const canChangeStatus = profile?.role === 'admin' || profile?.role === 'serviceleder' || profile?.role === 'montoer';
   const canViewEconomy = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
   const canManageTasks = profile?.role === 'admin' || profile?.role === 'serviceleder';
+  const canEditMaterials = profile?.role === 'admin' || profile?.role === 'serviceleder' || profile?.role === 'montoer';
 
-  useEffect(() => { loadOrdrer(); loadMarginSettings(); loadMontoerer(); }, []);
+  useEffect(() => { loadOrdrer(); loadMarginSettings(); loadMontoerer(); loadProdukter(); }, []);
 
   const loadOrdrer = async () => {
     const { data, error } = await supabase
@@ -2493,10 +2500,30 @@ function OrdreSystem() {
     setMontoerer(data || []);
   };
 
+  const loadProdukter = async () => {
+    const { data } = await supabase
+      .from('products')
+      .select('*')
+      .eq('active', true)
+      .order('title');
+    setProdukter(data || []);
+  };
+
+  const loadMaterials = async (ordreId) => {
+    const { data, error } = await supabase
+      .from('order_materials')
+      .select('*, products(sku, title)')
+      .eq('order_id', ordreId)
+      .order('created_at');
+    if (error) { console.error('Fejl:', error); return; }
+    setMaterials(data || []);
+  };
+
   useEffect(() => {
     if (selectedOrdre) {
       loadOrdreLinjer(selectedOrdre.id);
       loadTasks(selectedOrdre.id);
+      loadMaterials(selectedOrdre.id);
     }
   }, [selectedOrdre?.id]);
 
@@ -2507,7 +2534,9 @@ function OrdreSystem() {
       description: form.description || null,
       assigned_to: form.assigned_to || null,
       status: form.status || 'planlagt',
-      planned_date: form.planned_date || null
+      planned_date: form.planned_date || null,
+      estimated_hours: parseFloat(form.estimated_hours) || 0,
+      actual_hours: parseFloat(form.actual_hours) || 0
     };
 
     if (editingTask) {
@@ -2541,6 +2570,76 @@ function OrdreSystem() {
     const { error } = await supabase.from('tasks').update(updates).eq('id', task.id);
     if (error) { alert('Fejl: ' + error.message); return; }
     loadTasks(selectedOrdre.id);
+  };
+
+  const updateTaskHours = async (task, actualHours) => {
+    const { error } = await supabase.from('tasks').update({ actual_hours: parseFloat(actualHours) || 0 }).eq('id', task.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadTasks(selectedOrdre.id);
+  };
+
+  // Material funktioner
+  const saveMaterial = async (form) => {
+    const payload = {
+      order_id: selectedOrdre.id,
+      product_id: form.product_id || null,
+      title: form.title,
+      type: form.type || 'materiale',
+      planned_quantity: parseFloat(form.planned_quantity) || 0,
+      actual_quantity: parseFloat(form.actual_quantity) || 0,
+      cost_price: parseFloat(form.cost_price) || 0,
+      sale_price: parseFloat(form.sale_price) || 0,
+      notes: form.notes || null
+    };
+
+    if (editingMaterial) {
+      const { error } = await supabase.from('order_materials').update(payload).eq('id', editingMaterial.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    } else {
+      const { error } = await supabase.from('order_materials').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    }
+    setShowMaterialModal(false);
+    setEditingMaterial(null);
+    loadMaterials(selectedOrdre.id);
+  };
+
+  const deleteMaterial = async (mat) => {
+    if (!confirm(`Slet "${mat.title}"?`)) return;
+    const { error } = await supabase.from('order_materials').delete().eq('id', mat.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadMaterials(selectedOrdre.id);
+  };
+
+  const updateMaterialActual = async (mat, actualQty) => {
+    const { error } = await supabase.from('order_materials').update({ actual_quantity: parseFloat(actualQty) || 0 }).eq('id', mat.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadMaterials(selectedOrdre.id);
+  };
+
+  const importMaterialsFromOrder = async () => {
+    if (materials.length > 0 && !confirm('Der er allerede materialer registreret. Vil du importere flere fra ordrelinjer?')) return;
+    
+    // Importer fra ordrelinjer
+    const newMaterials = ordreLinjer.map(l => ({
+      order_id: selectedOrdre.id,
+      product_id: l.product_id,
+      title: l.title,
+      type: l.type,
+      planned_quantity: l.quantity,
+      actual_quantity: 0,
+      cost_price: l.cost_price,
+      sale_price: l.sale_price
+    }));
+    
+    if (newMaterials.length === 0) {
+      alert('Ingen linjer at importere');
+      return;
+    }
+    
+    const { error } = await supabase.from('order_materials').insert(newMaterials);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadMaterials(selectedOrdre.id);
   };
 
   const taskStatusColors = {
@@ -2803,10 +2902,30 @@ function OrdreSystem() {
           )}
         </div>
 
-        {/* Opgaver sektion - kun for admin/serviceleder */}
+        {/* Opgaver sektion med tidsregistrering */}
         {canManageTasks && (
           <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 32, marginBottom: 16 }}>
+            {/* Tid overblik */}
+            {tasks.length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginTop: 32 }}>
+                <div style={{ ...STYLES.card, textAlign: 'center' }}>
+                  <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>ESTIMERET TID</div>
+                  <div style={{ fontSize: 20, fontWeight: 700 }}>{tasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0).toFixed(1)} timer</div>
+                </div>
+                <div style={{ ...STYLES.card, textAlign: 'center' }}>
+                  <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>BRUGT TID</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary }}>{tasks.reduce((sum, t) => sum + (t.actual_hours || 0), 0).toFixed(1)} timer</div>
+                </div>
+                <div style={{ ...STYLES.card, textAlign: 'center', background: tasks.reduce((sum, t) => sum + (t.actual_hours || 0), 0) > tasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0) ? '#FEE2E2' : '#D1FAE5' }}>
+                  <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>AFVIGELSE</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: tasks.reduce((sum, t) => sum + (t.actual_hours || 0), 0) > tasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0) ? '#DC2626' : '#059669' }}>
+                    {(tasks.reduce((sum, t) => sum + (t.actual_hours || 0), 0) - tasks.reduce((sum, t) => sum + (t.estimated_hours || 0), 0)).toFixed(1)} timer
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, marginBottom: 16 }}>
               <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>✅ Opgaver ({tasks.length})</h2>
               <button onClick={() => { setEditingTask(null); setShowTaskModal(true); }} style={STYLES.primaryBtn}>+ Ny opgave</button>
             </div>
@@ -2820,6 +2939,8 @@ function OrdreSystem() {
                     <th style={STYLES.th}>Opgave</th>
                     <th style={STYLES.th}>Tildelt</th>
                     <th style={STYLES.th}>Dato</th>
+                    <th style={{ ...STYLES.th, textAlign: 'right' }}>Est.</th>
+                    <th style={{ ...STYLES.th, textAlign: 'right' }}>Brugt</th>
                     <th style={STYLES.th}>Status</th>
                     <th style={STYLES.th}></th>
                   </tr></thead>
@@ -2832,6 +2953,11 @@ function OrdreSystem() {
                         </td>
                         <td style={STYLES.td}>{t.profiles?.name || '-'}</td>
                         <td style={STYLES.td}>{t.planned_date ? new Date(t.planned_date).toLocaleDateString('da-DK') : '-'}</td>
+                        <td style={{ ...STYLES.td, textAlign: 'right' }}>{t.estimated_hours || 0}t</td>
+                        <td style={{ ...STYLES.td, textAlign: 'right' }}>
+                          <input type="number" value={t.actual_hours || 0} onChange={e => updateTaskHours(t, e.target.value)} 
+                            style={{ width: 60, padding: '2px 4px', border: `1px solid ${COLORS.border}`, borderRadius: 4, textAlign: 'right' }} step="0.5" min="0" />
+                        </td>
                         <td style={STYLES.td}>
                           <span style={{ 
                             padding: '4px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
@@ -2842,13 +2968,13 @@ function OrdreSystem() {
                         <td style={STYLES.td}>
                           <div style={{ display: 'flex', gap: 4 }}>
                             {t.status === 'planlagt' && (
-                              <button onClick={() => updateTaskStatus(t, 'igang')} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>▶️ Start</button>
+                              <button onClick={() => updateTaskStatus(t, 'igang')} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>▶️</button>
                             )}
                             {t.status === 'igang' && (
-                              <button onClick={() => updateTaskStatus(t, 'afsluttet')} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>✅ Afslut</button>
+                              <button onClick={() => updateTaskStatus(t, 'afsluttet')} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>✅</button>
                             )}
-                            <button onClick={() => { setEditingTask(t); setShowTaskModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>Ret</button>
-                            <button onClick={() => deleteTask(t)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>Slet</button>
+                            <button onClick={() => { setEditingTask(t); setShowTaskModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>✏️</button>
+                            <button onClick={() => deleteTask(t)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>🗑️</button>
                           </div>
                         </td>
                       </tr>
@@ -2860,10 +2986,125 @@ function OrdreSystem() {
           </>
         )}
 
+        {/* Materialeforbrug sektion */}
+        {canEditMaterials && (
+          <>
+            {/* Økonomi overblik for materialer */}
+            {materials.length > 0 && canViewEconomy && (() => {
+              const plannedCost = materials.reduce((sum, m) => sum + (m.planned_quantity * m.cost_price), 0);
+              const actualCost = materials.reduce((sum, m) => sum + (m.actual_quantity * m.cost_price), 0);
+              const plannedSale = materials.reduce((sum, m) => sum + (m.planned_quantity * m.sale_price), 0);
+              const actualSale = materials.reduce((sum, m) => sum + (m.actual_quantity * m.sale_price), 0);
+              const plannedDB = plannedSale - plannedCost;
+              const actualDB = actualSale - actualCost;
+              const costDiff = actualCost - plannedCost;
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginTop: 32 }}>
+                  <div style={{ ...STYLES.card, textAlign: 'center' }}>
+                    <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>PLANLAGT KOST</div>
+                    <div style={{ fontSize: 18, fontWeight: 700 }}>{plannedCost.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+                  </div>
+                  <div style={{ ...STYLES.card, textAlign: 'center' }}>
+                    <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>FAKTISK KOST</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: COLORS.primary }}>{actualCost.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+                  </div>
+                  <div style={{ ...STYLES.card, textAlign: 'center', background: costDiff > 0 ? '#FEE2E2' : '#D1FAE5' }}>
+                    <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>AFVIGELSE</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: costDiff > 0 ? '#DC2626' : '#059669' }}>
+                      {costDiff > 0 ? '+' : ''}{costDiff.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+                    </div>
+                  </div>
+                  <div style={{ ...STYLES.card, textAlign: 'center', background: actualDB >= plannedDB ? '#D1FAE5' : '#FEE2E2' }}>
+                    <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>FAKTISK DB</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: actualDB >= plannedDB ? '#059669' : '#DC2626' }}>
+                      {actualDB.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 32, marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>📦 Materialeforbrug ({materials.length})</h2>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {ordreLinjer.length > 0 && (
+                  <button onClick={importMaterialsFromOrder} style={STYLES.secondaryBtn}>📥 Importer fra tilbud</button>
+                )}
+                <button onClick={() => { setEditingMaterial(null); setShowMaterialModal(true); }} style={STYLES.primaryBtn}>+ Tilføj materiale</button>
+              </div>
+            </div>
+
+            <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+              {materials.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>
+                  Ingen materialer registreret. Klik "Importer fra tilbud" for at hente planlagte materialer.
+                </div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ background: COLORS.bg }}>
+                    <th style={STYLES.th}>Materiale</th>
+                    <th style={{ ...STYLES.th, textAlign: 'right' }}>Planlagt</th>
+                    <th style={{ ...STYLES.th, textAlign: 'right' }}>Faktisk</th>
+                    <th style={{ ...STYLES.th, textAlign: 'right' }}>Afvig.</th>
+                    {canViewEconomy && <th style={{ ...STYLES.th, textAlign: 'right' }}>Kost</th>}
+                    {canViewEconomy && <th style={{ ...STYLES.th, textAlign: 'right' }}>Diff</th>}
+                    <th style={STYLES.th}></th>
+                  </tr></thead>
+                  <tbody>
+                    {materials.map(m => {
+                      const diff = (m.actual_quantity || 0) - (m.planned_quantity || 0);
+                      const costDiff = diff * m.cost_price;
+                      return (
+                        <tr key={m.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                          <td style={STYLES.td}>
+                            <div style={{ fontWeight: 500 }}>{m.title}</div>
+                            {m.products?.sku && <div style={{ fontSize: 11, color: COLORS.textLight }}>SKU: {m.products.sku}</div>}
+                          </td>
+                          <td style={{ ...STYLES.td, textAlign: 'right' }}>{m.planned_quantity}</td>
+                          <td style={{ ...STYLES.td, textAlign: 'right' }}>
+                            <input type="number" value={m.actual_quantity || 0} onChange={e => updateMaterialActual(m, e.target.value)} 
+                              style={{ width: 70, padding: '2px 4px', border: `1px solid ${COLORS.border}`, borderRadius: 4, textAlign: 'right' }} step="1" min="0" />
+                          </td>
+                          <td style={{ ...STYLES.td, textAlign: 'right' }}>
+                            <span style={{ color: diff > 0 ? '#DC2626' : diff < 0 ? '#059669' : COLORS.text, fontWeight: diff !== 0 ? 600 : 400 }}>
+                              {diff > 0 ? '+' : ''}{diff}
+                            </span>
+                          </td>
+                          {canViewEconomy && <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(m.cost_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>}
+                          {canViewEconomy && (
+                            <td style={{ ...STYLES.td, textAlign: 'right' }}>
+                              <span style={{ color: costDiff > 0 ? '#DC2626' : costDiff < 0 ? '#059669' : COLORS.text, fontWeight: costDiff !== 0 ? 600 : 400 }}>
+                                {costDiff > 0 ? '+' : ''}{costDiff.toLocaleString('da-DK', { minimumFractionDigits: 2 })}
+                              </span>
+                            </td>
+                          )}
+                          <td style={STYLES.td}>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              <button onClick={() => { setEditingMaterial(m); setShowMaterialModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>✏️</button>
+                              {canEditOrdre && <button onClick={() => deleteMaterial(m)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>🗑️</button>}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
+
         {/* Task Modal */}
         {showTaskModal && (
           <Modal title={editingTask ? 'Rediger opgave' : 'Ny opgave'} onClose={() => { setShowTaskModal(false); setEditingTask(null); }}>
             <TaskForm initial={editingTask} montoerer={montoerer} onSave={saveTask} onCancel={() => { setShowTaskModal(false); setEditingTask(null); }} />
+          </Modal>
+        )}
+
+        {/* Material Modal */}
+        {showMaterialModal && (
+          <Modal title={editingMaterial ? 'Rediger materiale' : 'Tilføj materiale'} onClose={() => { setShowMaterialModal(false); setEditingMaterial(null); }}>
+            <MaterialForm initial={editingMaterial} produkter={produkter} onSave={saveMaterial} onCancel={() => { setShowMaterialModal(false); setEditingMaterial(null); }} />
           </Modal>
         )}
       </div>
@@ -2957,7 +3198,9 @@ function TaskForm({ initial, montoerer, onSave, onCancel }) {
     description: initial?.description || '',
     assigned_to: initial?.assigned_to || '',
     status: initial?.status || 'planlagt',
-    planned_date: initial?.planned_date || ''
+    planned_date: initial?.planned_date || '',
+    estimated_hours: initial?.estimated_hours || '',
+    actual_hours: initial?.actual_hours || ''
   });
 
   return (
@@ -2985,6 +3228,18 @@ function TaskForm({ initial, montoerer, onSave, onCancel }) {
           <input type="date" value={form.planned_date} onChange={e => setForm({ ...form, planned_date: e.target.value })} style={STYLES.input} />
         </div>
       </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Estimeret tid (timer)</label>
+          <input type="number" value={form.estimated_hours} onChange={e => setForm({ ...form, estimated_hours: e.target.value })} style={STYLES.input} placeholder="0" step="0.5" min="0" />
+        </div>
+        {initial && (
+          <div>
+            <label style={STYLES.label}>Brugt tid (timer)</label>
+            <input type="number" value={form.actual_hours} onChange={e => setForm({ ...form, actual_hours: e.target.value })} style={STYLES.input} placeholder="0" step="0.5" min="0" />
+          </div>
+        )}
+      </div>
       {initial && (
         <div>
           <label style={STYLES.label}>Status</label>
@@ -2998,6 +3253,92 @@ function TaskForm({ initial, montoerer, onSave, onCancel }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
         <button onClick={() => { if (!form.title) { alert('Titel er påkrævet'); return; } onSave(form); }} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret opgave'}</button>
+      </div>
+    </div>
+  );
+}
+
+// MaterialForm component
+function MaterialForm({ initial, produkter, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    product_id: initial?.product_id || '',
+    title: initial?.title || '',
+    type: initial?.type || 'materiale',
+    planned_quantity: initial?.planned_quantity || '',
+    actual_quantity: initial?.actual_quantity || '',
+    cost_price: initial?.cost_price || '',
+    sale_price: initial?.sale_price || '',
+    notes: initial?.notes || ''
+  });
+
+  const selectProdukt = (produktId) => {
+    if (!produktId) {
+      setForm({ ...form, product_id: '' });
+      return;
+    }
+    const p = produkter.find(pr => pr.id === produktId);
+    if (p) {
+      setForm({
+        ...form,
+        product_id: p.id,
+        title: p.title,
+        type: p.type,
+        cost_price: p.cost_price,
+        sale_price: p.sale_price
+      });
+    }
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div>
+        <label style={STYLES.label}>Vælg fra katalog</label>
+        <select value={form.product_id} onChange={e => selectProdukt(e.target.value)} style={STYLES.select}>
+          <option value="">-- Manuelt input --</option>
+          {produkter.map(p => (
+            <option key={p.id} value={p.id}>{p.sku ? `[${p.sku}] ` : ''}{p.title}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label style={STYLES.label}>Titel *</label>
+        <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={STYLES.input} placeholder="Materiale navn" />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Type</label>
+          <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} style={STYLES.select}>
+            <option value="materiale">Materiale</option>
+            <option value="timer">Timer</option>
+            <option value="ydelse">Ydelse</option>
+          </select>
+        </div>
+        <div>
+          <label style={STYLES.label}>Planlagt antal</label>
+          <input type="number" value={form.planned_quantity} onChange={e => setForm({ ...form, planned_quantity: e.target.value })} style={STYLES.input} placeholder="0" min="0" />
+        </div>
+        <div>
+          <label style={STYLES.label}>Faktisk antal</label>
+          <input type="number" value={form.actual_quantity} onChange={e => setForm({ ...form, actual_quantity: e.target.value })} style={STYLES.input} placeholder="0" min="0" />
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Kostpris pr. enhed</label>
+          <input type="number" value={form.cost_price} onChange={e => setForm({ ...form, cost_price: e.target.value })} style={STYLES.input} placeholder="0.00" step="0.01" min="0" />
+        </div>
+        <div>
+          <label style={STYLES.label}>Salgspris pr. enhed</label>
+          <input type="number" value={form.sale_price} onChange={e => setForm({ ...form, sale_price: e.target.value })} style={STYLES.input} placeholder="0.00" step="0.01" min="0" />
+        </div>
+      </div>
+      <div>
+        <label style={STYLES.label}>Noter</label>
+        <input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} style={STYLES.input} placeholder="Evt. bemærkninger" />
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={() => { if (!form.title) { alert('Titel er påkrævet'); return; } onSave(form); }} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Tilføj materiale'}</button>
       </div>
     </div>
   );
