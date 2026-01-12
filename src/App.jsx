@@ -253,42 +253,202 @@ function LoginPage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
-// DASHBOARD (Original)
+// DASHBOARD med KPI'er
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 function Dashboard({ setSection }) {
-  const [stats, setStats] = useState({ customers: 0, projects: 0 });
+  const [stats, setStats] = useState({ 
+    customers: 0, 
+    projects: 0,
+    openOrders: 0,
+    unpaidInvoices: 0,
+    unpaidAmount: 0,
+    revenue: 0,
+    totalDB: 0,
+    dbPercent: 0
+  });
+  const [recentOrders, setRecentOrders] = useState([]);
+  const [unpaidList, setUnpaidList] = useState([]);
   const { profile } = useAuth();
+  const canViewFinance = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
+    // Basis stats
     const [customers, projects] = await Promise.all([
       supabase.from('customers').select('id', { count: 'exact', head: true }),
       supabase.from('projects').select('id', { count: 'exact', head: true })
     ]);
-    setStats({ customers: customers.count || 0, projects: projects.count || 0 });
+
+    // Åbne ordrer (ikke faktureret)
+    const { data: openOrders } = await supabase
+      .from('orders')
+      .select('id, order_number, title, status, total_sale, customers(name, company)')
+      .neq('status', 'faktureret')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    // Ubetalte fakturaer
+    const { data: unpaidInvoices } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, total, due_date, customer_company, customer_name')
+      .eq('status', 'sendt')
+      .order('due_date', { ascending: true });
+
+    // Betalte fakturaer (omsætning)
+    const { data: paidInvoices } = await supabase
+      .from('invoices')
+      .select('total, subtotal')
+      .eq('status', 'betalt');
+
+    // DB fra afsluttede ordrer
+    const { data: completedOrders } = await supabase
+      .from('orders')
+      .select('total_cost, total_sale')
+      .in('status', ['afsluttet', 'faktureret']);
+
+    const revenue = (paidInvoices || []).reduce((sum, i) => sum + Number(i.total || 0), 0);
+    const totalCost = (completedOrders || []).reduce((sum, o) => sum + Number(o.total_cost || 0), 0);
+    const totalSale = (completedOrders || []).reduce((sum, o) => sum + Number(o.total_sale || 0), 0);
+    const totalDB = totalSale - totalCost;
+    const dbPercent = totalSale > 0 ? ((totalDB / totalSale) * 100) : 0;
+    const unpaidAmount = (unpaidInvoices || []).reduce((sum, i) => sum + Number(i.total || 0), 0);
+
+    setStats({ 
+      customers: customers.count || 0, 
+      projects: projects.count || 0,
+      openOrders: (openOrders || []).length,
+      unpaidInvoices: (unpaidInvoices || []).length,
+      unpaidAmount,
+      revenue,
+      totalDB,
+      dbPercent
+    });
+    setRecentOrders(openOrders || []);
+    setUnpaidList((unpaidInvoices || []).slice(0, 5));
+  };
+
+  const statusColors = {
+    oprettet: '#6B7280', planlagt: '#1D4ED8', igang: '#D97706', afsluttet: '#059669'
   };
 
   return (
     <div>
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Velkommen, {profile?.name || 'bruger'}</h1>
-        <p style={{ color: COLORS.textLight, marginTop: 4 }}>Her er dit overblik</p>
+        <p style={{ color: COLORS.textLight, marginTop: 4 }}>Her er dit overblik for i dag</p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24 }}>
+
+      {/* Hovedtal */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 32 }}>
         <StatCard icon="👥" label="Kunder" value={stats.customers} onClick={() => setSection('kunder')} />
         <StatCard icon="🔧" label="Projekter" value={stats.projects} onClick={() => setSection('projekter')} />
+        <StatCard icon="🏗️" label="Åbne ordrer" value={stats.openOrders} onClick={() => setSection('ordrer')} color="#D97706" />
+        {canViewFinance && (
+          <StatCard icon="🧾" label="Ubetalte fakturaer" value={stats.unpaidInvoices} onClick={() => setSection('fakturaer')} color="#DC2626" />
+        )}
+      </div>
+
+      {/* Økonomi - kun for admin/sælger/serviceleder */}
+      {canViewFinance && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 32 }}>
+          <div style={{ ...STYLES.card, background: '#F0FDF4' }}>
+            <div style={{ fontSize: 13, color: COLORS.textLight, marginBottom: 4 }}>💰 Omsætning (betalt)</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#059669' }}>{stats.revenue.toLocaleString('da-DK')} kr.</div>
+          </div>
+          <div style={{ ...STYLES.card, background: stats.unpaidAmount > 0 ? '#FEF2F2' : '#F9FAFB' }}>
+            <div style={{ fontSize: 13, color: COLORS.textLight, marginBottom: 4 }}>📋 Udestående</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: stats.unpaidAmount > 0 ? '#DC2626' : COLORS.text }}>{stats.unpaidAmount.toLocaleString('da-DK')} kr.</div>
+          </div>
+          <div style={{ ...STYLES.card, background: stats.dbPercent >= 25 ? '#F0FDF4' : stats.dbPercent >= 15 ? '#FFFBEB' : '#FEF2F2' }}>
+            <div style={{ fontSize: 13, color: COLORS.textLight, marginBottom: 4 }}>📊 Dækningsbidrag</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: stats.dbPercent >= 25 ? '#059669' : stats.dbPercent >= 15 ? '#D97706' : '#DC2626' }}>
+              {stats.dbPercent.toFixed(1)}%
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.textLight }}>{stats.totalDB.toLocaleString('da-DK')} kr.</div>
+          </div>
+        </div>
+      )}
+
+      {/* To kolonner: Ordrer og Fakturaer */}
+      <div style={{ display: 'grid', gridTemplateColumns: canViewFinance ? '1fr 1fr' : '1fr', gap: 24 }}>
+        {/* Aktive ordrer */}
+        <div style={STYLES.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>🏗️ Aktive ordrer</h3>
+            <button onClick={() => setSection('ordrer')} style={{ ...STYLES.secondaryBtn, padding: '4px 12px', fontSize: 12 }}>Se alle</button>
+          </div>
+          {recentOrders.length === 0 ? (
+            <div style={{ color: COLORS.textLight, fontSize: 14, textAlign: 'center', padding: 24 }}>Ingen aktive ordrer</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {recentOrders.map(o => (
+                <div key={o.id} onClick={() => setSection('ordrer')} style={{ 
+                  padding: 12, background: COLORS.bg, borderRadius: 8, cursor: 'pointer',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                }}>
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 14 }}>#{o.order_number} {o.title}</div>
+                    <div style={{ fontSize: 12, color: COLORS.textLight }}>{o.customers?.company || o.customers?.name}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ 
+                      padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600, 
+                      background: `${statusColors[o.status]}20`, color: statusColors[o.status] 
+                    }}>{o.status}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Ubetalte fakturaer */}
+        {canViewFinance && (
+          <div style={STYLES.card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>🧾 Afventer betaling</h3>
+              <button onClick={() => setSection('fakturaer')} style={{ ...STYLES.secondaryBtn, padding: '4px 12px', fontSize: 12 }}>Se alle</button>
+            </div>
+            {unpaidList.length === 0 ? (
+              <div style={{ color: COLORS.textLight, fontSize: 14, textAlign: 'center', padding: 24 }}>Ingen ubetalte fakturaer ✓</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {unpaidList.map(f => {
+                  const isOverdue = f.due_date && new Date(f.due_date) < new Date();
+                  return (
+                    <div key={f.id} onClick={() => setSection('fakturaer')} style={{ 
+                      padding: 12, background: isOverdue ? '#FEF2F2' : COLORS.bg, borderRadius: 8, cursor: 'pointer',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                    }}>
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: 14 }}>#{f.invoice_number}</div>
+                        <div style={{ fontSize: 12, color: COLORS.textLight }}>{f.customer_company || f.customer_name}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 600, color: isOverdue ? '#DC2626' : COLORS.text }}>{Number(f.total).toLocaleString('da-DK')} kr.</div>
+                        <div style={{ fontSize: 11, color: isOverdue ? '#DC2626' : COLORS.textLight }}>
+                          {isOverdue ? '⚠️ Forfalden' : f.due_date ? `Forfald: ${new Date(f.due_date).toLocaleDateString('da-DK')}` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function StatCard({ icon, label, value, onClick }) {
+function StatCard({ icon, label, value, onClick, color }) {
   return (
     <div onClick={onClick} style={{ ...STYLES.card, cursor: 'pointer', transition: 'transform 0.2s' }}>
       <div style={{ fontSize: 32, marginBottom: 8 }}>{icon}</div>
-      <div style={{ fontSize: 32, fontWeight: 700, color: COLORS.primary }}>{value}</div>
+      <div style={{ fontSize: 32, fontWeight: 700, color: color || COLORS.primary }}>{value}</div>
       <div style={{ color: COLORS.textLight, fontSize: 14 }}>{label}</div>
     </div>
   );
@@ -1282,106 +1442,183 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     const { data: linjer } = await supabase.from('quote_lines').select('*').eq('quote_id', t.id).eq('show_on_quote', true).order('sort_order');
     const kunde = selectedProjekt.customers;
     const showLines = t.show_lines && linjer && linjer.length > 0;
-    
-    // Generer linjer HTML
-    const linjerHtml = showLines ? `
-      <div class="section">
-        <div class="label">SPECIFIKATION</div>
-        <table class="lines-table">
-          <thead>
-            <tr>
-              <th style="text-align: left;">Beskrivelse</th>
-              <th style="text-align: right; width: 60px;">Antal</th>
-              <th style="text-align: right; width: 100px;">Pris</th>
-              <th style="text-align: right; width: 100px;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${linjer.map(l => `
-              <tr>
-                <td>${l.title}</td>
-                <td style="text-align: right;">${l.quantity}</td>
-                <td style="text-align: right;">${Number(l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
-                <td style="text-align: right;">${(l.quantity * l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    ` : '';
+    const subtotal = showLines ? linjer.reduce((sum, l) => sum + (l.quantity * l.sale_price), 0) : Number(t.total_price) / 1.25;
+    const moms = subtotal * 0.25;
+    const total = subtotal + moms;
     
     const printWindow = window.open('', '_blank');
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Tilbud - ${t.title}</title>
+        <title>Tilbud ${t.id.slice(0,8).toUpperCase()}</title>
         <style>
-          body { font-family: Arial, sans-serif; padding: 40px; max-width: 800px; margin: 0 auto; }
-          h1 { color: #1E3A5F; border-bottom: 2px solid #1E3A5F; padding-bottom: 10px; }
-          .header { margin-bottom: 30px; }
-          .section { margin-bottom: 20px; }
-          .label { color: #666; font-size: 12px; margin-bottom: 4px; }
-          .value { font-size: 14px; }
-          .price { font-size: 24px; font-weight: bold; color: #059669; }
-          .description { white-space: pre-wrap; background: #f5f5f5; padding: 15px; border-radius: 8px; }
-          .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
-          .status { display: inline-block; padding: 4px 12px; border-radius: 4px; font-size: 12px; }
-          .status-kladde { background: #FEF3C7; color: #92400E; }
-          .status-sendt { background: #DBEAFE; color: #1D4ED8; }
-          .status-accepteret { background: #D1FAE5; color: #059669; }
-          .status-afvist { background: #FEE2E2; color: #DC2626; }
-          .lines-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-          .lines-table th, .lines-table td { padding: 8px; border-bottom: 1px solid #ddd; font-size: 13px; }
-          .lines-table th { background: #f5f5f5; font-weight: 600; }
-          @media print { body { padding: 20px; } }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; color: #333; line-height: 1.5; }
+          .page { max-width: 800px; margin: 0 auto; padding: 40px; }
+          
+          /* Header */
+          .header { display: flex; justify-content: space-between; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 3px solid #1E3A5F; }
+          .logo { font-size: 28px; font-weight: 700; }
+          .logo-elta { color: #1E3A5F; }
+          .logo-solar { color: #F59E0B; }
+          .company-info { text-align: right; font-size: 11px; color: #666; }
+          
+          /* Document title */
+          .doc-title { font-size: 32px; font-weight: 700; color: #1E3A5F; margin-bottom: 30px; }
+          .doc-number { font-size: 14px; color: #666; margin-top: 4px; }
+          
+          /* Info grid */
+          .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
+          .info-box { }
+          .info-label { font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+          .info-value { font-size: 13px; }
+          .info-value strong { font-weight: 600; }
+          
+          /* Description */
+          .description-box { background: #F8FAFC; border-left: 4px solid #1E3A5F; padding: 16px 20px; margin-bottom: 30px; }
+          .description-box p { white-space: pre-wrap; }
+          
+          /* Table */
+          .lines-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+          .lines-table th { background: #1E3A5F; color: white; padding: 12px; text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+          .lines-table th:nth-child(2), .lines-table th:nth-child(3), .lines-table th:nth-child(4) { text-align: right; }
+          .lines-table td { padding: 12px; border-bottom: 1px solid #E5E7EB; }
+          .lines-table td:nth-child(2), .lines-table td:nth-child(3), .lines-table td:nth-child(4) { text-align: right; }
+          .lines-table tr:nth-child(even) { background: #F9FAFB; }
+          
+          /* Totals */
+          .totals { margin-left: auto; width: 280px; }
+          .totals-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #E5E7EB; }
+          .totals-row.total { border-bottom: none; border-top: 2px solid #1E3A5F; padding-top: 12px; margin-top: 4px; }
+          .totals-row.total .label, .totals-row.total .value { font-size: 18px; font-weight: 700; color: #1E3A5F; }
+          
+          /* Footer */
+          .footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #E5E7EB; display: flex; justify-content: space-between; font-size: 10px; color: #999; }
+          .footer-section { }
+          
+          /* Validity notice */
+          .validity { background: #FEF3C7; border: 1px solid #F59E0B; border-radius: 6px; padding: 12px 16px; margin-top: 24px; font-size: 11px; }
+          
+          @media print { 
+            body { padding: 0; }
+            .page { padding: 20px; }
+          }
         </style>
       </head>
       <body>
-        <div class="header">
-          <h1>TILBUD</h1>
-          <div class="section">
-            <div class="label">TILBUDSNUMMER</div>
-            <div class="value">${t.id.slice(0, 8).toUpperCase()}</div>
+        <div class="page">
+          <div class="header">
+            <div>
+              <div class="logo"><span class="logo-elta">Elta</span><span class="logo-solar">Solar</span></div>
+              <div style="font-size: 11px; color: #666; margin-top: 4px;">Fra sol til stikkontakt</div>
+            </div>
+            <div class="company-info">
+              <strong>EltaSolar ApS</strong><br>
+              Solskinsvej 123<br>
+              2100 København Ø<br>
+              CVR: 12345678<br>
+              kontakt@eltasolar.dk
+            </div>
           </div>
-        </div>
-        
-        <div class="section">
-          <div class="label">KUNDE</div>
-          <div class="value">${kunde?.company || kunde?.name || 'Ingen kunde'}</div>
-          ${kunde?.name && kunde?.company ? `<div class="value">${kunde.name}</div>` : ''}
-          ${kunde?.email ? `<div class="value">${kunde.email}</div>` : ''}
-          ${kunde?.phone ? `<div class="value">${kunde.phone}</div>` : ''}
-        </div>
-        
-        <div class="section">
-          <div class="label">PROJEKT</div>
-          <div class="value">${selectedProjekt.name}</div>
-          ${selectedProjekt.address ? `<div class="value">${selectedProjekt.address}, ${selectedProjekt.zip || ''} ${selectedProjekt.city || ''}</div>` : ''}
-        </div>
-        
-        <div class="section">
-          <div class="label">TILBUD</div>
-          <div class="value" style="font-size: 18px; font-weight: bold;">${t.title}</div>
-        </div>
-        
-        ${t.description ? `
-        <div class="section">
-          <div class="label">BESKRIVELSE</div>
-          <div class="description">${t.description}</div>
-        </div>
-        ` : ''}
-        
-        ${linjerHtml}
-        
-        <div class="section" style="margin-top: 24px; padding-top: 16px; border-top: 2px solid #1E3A5F;">
-          <div class="label">TOTALPRIS ${showLines ? '(INKL. MOMS)' : ''}</div>
-          <div class="price">${Number(t.total_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
-        </div>
-        
-        <div class="footer">
-          <div>Dato: ${new Date(t.created_at).toLocaleDateString('da-DK', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
-          <div>EltaSolar • CVR: XXXXXXXX</div>
+          
+          <div class="doc-title">
+            TILBUD
+            <div class="doc-number">Tilbudsnr: ${t.id.slice(0,8).toUpperCase()}${t.version > 1 ? ` (v${t.version})` : ''}</div>
+          </div>
+          
+          <div class="info-grid">
+            <div class="info-box">
+              <div class="info-label">Kunde</div>
+              <div class="info-value">
+                <strong>${kunde?.company || kunde?.name || 'Ingen kunde'}</strong><br>
+                ${kunde?.name && kunde?.company ? kunde.name + '<br>' : ''}
+                ${kunde?.address ? kunde.address + '<br>' : ''}
+                ${kunde?.zip || ''} ${kunde?.city || ''}<br>
+                ${kunde?.cvr ? 'CVR: ' + kunde.cvr : ''}
+              </div>
+            </div>
+            <div class="info-box">
+              <div class="info-label">Projektadresse</div>
+              <div class="info-value">
+                <strong>${selectedProjekt.name}</strong><br>
+                ${selectedProjekt.address || ''}<br>
+                ${selectedProjekt.zip || ''} ${selectedProjekt.city || ''}
+              </div>
+            </div>
+            <div class="info-box">
+              <div class="info-label">Dato</div>
+              <div class="info-value">${new Date(t.created_at).toLocaleDateString('da-DK', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+            </div>
+            <div class="info-box">
+              <div class="info-label">Gyldig til</div>
+              <div class="info-value">${new Date(Date.now() + 30*24*60*60*1000).toLocaleDateString('da-DK', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+            </div>
+          </div>
+          
+          <div class="info-box" style="margin-bottom: 24px;">
+            <div class="info-label">Vedrørende</div>
+            <div class="info-value"><strong style="font-size: 16px;">${t.title}</strong></div>
+          </div>
+          
+          ${t.description ? `<div class="description-box"><p>${t.description}</p></div>` : ''}
+          
+          ${showLines ? `
+          <table class="lines-table">
+            <thead>
+              <tr>
+                <th style="width: 50%;">Beskrivelse</th>
+                <th style="width: 15%;">Antal</th>
+                <th style="width: 17%;">Enhedspris</th>
+                <th style="width: 18%;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${linjer.map(l => `
+                <tr>
+                  <td>${l.title}</td>
+                  <td>${l.quantity}</td>
+                  <td>${Number(l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</td>
+                  <td>${(l.quantity * l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          
+          <div class="totals">
+            <div class="totals-row">
+              <span class="label">Subtotal</span>
+              <span class="value">${subtotal.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</span>
+            </div>
+            <div class="totals-row">
+              <span class="label">Moms (25%)</span>
+              <span class="value">${moms.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</span>
+            </div>
+            <div class="totals-row total">
+              <span class="label">I alt inkl. moms</span>
+              <span class="value">${total.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</span>
+            </div>
+          </div>
+          ` : `
+          <div class="totals" style="width: 100%;">
+            <div class="totals-row total" style="justify-content: center; text-align: center;">
+              <span class="value" style="font-size: 28px;">Samlet pris: ${Number(t.total_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</span>
+            </div>
+          </div>
+          `}
+          
+          <div class="validity">
+            ⏰ Dette tilbud er gyldigt i 30 dage fra ovenstående dato. Ved accept bedes tilbudsnummeret anføres.
+          </div>
+          
+          <div class="footer">
+            <div class="footer-section">
+              <strong>EltaSolar ApS</strong> • CVR: 12345678 • Bank: Danske Bank reg. 1234 konto 12345678
+            </div>
+            <div class="footer-section">
+              Side 1 af 1
+            </div>
+          </div>
         </div>
       </body>
       </html>
@@ -3212,6 +3449,15 @@ function OrdreSystem() {
   }
 
   // Ordre-liste
+  // Beregn status-tæller
+  const statusCounts = {
+    oprettet: ordrer.filter(o => o.status === 'oprettet').length,
+    planlagt: ordrer.filter(o => o.status === 'planlagt').length,
+    igang: ordrer.filter(o => o.status === 'igang').length,
+    afsluttet: ordrer.filter(o => o.status === 'afsluttet').length,
+    faktureret: ordrer.filter(o => o.status === 'faktureret').length
+  };
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -3219,6 +3465,32 @@ function OrdreSystem() {
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Ordrer</h1>
           <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filteredOrdrer.length} af {ordrer.length} ordrer</p>
         </div>
+      </div>
+
+      {/* Status-overblik */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
+        {[
+          { key: 'oprettet', label: 'Oprettet', color: '#6B7280' },
+          { key: 'planlagt', label: 'Planlagt', color: '#1D4ED8' },
+          { key: 'igang', label: 'I gang', color: '#D97706' },
+          { key: 'afsluttet', label: 'Afsluttet', color: '#059669' },
+          { key: 'faktureret', label: 'Faktureret', color: '#4F46E5' }
+        ].map(s => (
+          <div 
+            key={s.key}
+            onClick={() => setFilterStatus(filterStatus === s.key ? 'alle' : s.key)}
+            style={{ 
+              padding: '8px 16px', borderRadius: 8, cursor: 'pointer',
+              background: filterStatus === s.key ? s.color : `${s.color}10`,
+              color: filterStatus === s.key ? 'white' : s.color,
+              fontWeight: 600, fontSize: 13,
+              border: `2px solid ${s.color}`,
+              transition: 'all 0.2s'
+            }}
+          >
+            {statusCounts[s.key]} {s.label}
+          </div>
+        ))}
       </div>
 
       {/* Søgning og filtrering */}
@@ -3730,34 +4002,171 @@ function FakturaSystem() {
 
   const generatePDF = (faktura) => {
     const lines = fakturaLinjer;
-    const pdfContent = `
-FAKTURA #${faktura.invoice_number}
-====================================
-Dato: ${new Date(faktura.invoice_date).toLocaleDateString('da-DK')}
-Forfald: ${faktura.due_date ? new Date(faktura.due_date).toLocaleDateString('da-DK') : '-'}
-
-KUNDE:
-${faktura.customer_company || faktura.customer_name || ''}
-${faktura.customer_address || ''}
-${faktura.customer_zip || ''} ${faktura.customer_city || ''}
-CVR: ${faktura.customer_cvr || '-'}
-
-LINJER:
-${lines.map(l => `${l.title}: ${l.quantity} x ${Number(l.unit_price).toFixed(2)} = ${Number(l.total).toFixed(2)} kr.`).join('\n')}
-
-====================================
-Subtotal: ${Number(faktura.subtotal).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
-Moms (${faktura.vat_rate}%): ${Number(faktura.vat_amount).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
-TOTAL: ${Number(faktura.total).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
-====================================
-    `;
+    const typeLabels = { materiale: 'Materiale', timer: 'Timer', ydelse: 'Ydelse' };
     
-    const blob = new Blob([pdfContent], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Faktura_${faktura.invoice_number}.txt`;
-    a.click();
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Faktura ${faktura.invoice_number}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; color: #333; line-height: 1.5; }
+          .page { max-width: 800px; margin: 0 auto; padding: 40px; }
+          
+          /* Header */
+          .header { display: flex; justify-content: space-between; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 3px solid #1E3A5F; }
+          .logo { font-size: 28px; font-weight: 700; }
+          .logo-elta { color: #1E3A5F; }
+          .logo-solar { color: #F59E0B; }
+          .company-info { text-align: right; font-size: 11px; color: #666; }
+          
+          /* Document title */
+          .doc-title { font-size: 32px; font-weight: 700; color: #1E3A5F; margin-bottom: 30px; }
+          .doc-number { font-size: 14px; color: #666; margin-top: 4px; }
+          
+          /* Info grid */
+          .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
+          .info-box { }
+          .info-label { font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+          .info-value { font-size: 13px; }
+          .info-value strong { font-weight: 600; }
+          
+          /* Table */
+          .lines-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+          .lines-table th { background: #1E3A5F; color: white; padding: 12px; text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+          .lines-table th:nth-child(3), .lines-table th:nth-child(4), .lines-table th:nth-child(5) { text-align: right; }
+          .lines-table td { padding: 12px; border-bottom: 1px solid #E5E7EB; }
+          .lines-table td:nth-child(3), .lines-table td:nth-child(4), .lines-table td:nth-child(5) { text-align: right; }
+          .lines-table tr:nth-child(even) { background: #F9FAFB; }
+          
+          /* Totals */
+          .totals { margin-left: auto; width: 280px; }
+          .totals-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #E5E7EB; }
+          .totals-row.total { border-bottom: none; border-top: 2px solid #1E3A5F; padding-top: 12px; margin-top: 4px; }
+          .totals-row.total .label, .totals-row.total .value { font-size: 18px; font-weight: 700; color: #1E3A5F; }
+          
+          /* Payment info */
+          .payment-box { background: #F0FDF4; border: 1px solid #059669; border-radius: 6px; padding: 16px 20px; margin-top: 30px; }
+          .payment-title { font-weight: 600; color: #059669; margin-bottom: 8px; }
+          
+          /* Footer */
+          .footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #E5E7EB; display: flex; justify-content: space-between; font-size: 10px; color: #999; }
+          
+          @media print { 
+            body { padding: 0; }
+            .page { padding: 20px; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="page">
+          <div class="header">
+            <div>
+              <div class="logo"><span class="logo-elta">Elta</span><span class="logo-solar">Solar</span></div>
+              <div style="font-size: 11px; color: #666; margin-top: 4px;">Fra sol til stikkontakt</div>
+            </div>
+            <div class="company-info">
+              <strong>EltaSolar ApS</strong><br>
+              Solskinsvej 123<br>
+              2100 København Ø<br>
+              CVR: 12345678<br>
+              kontakt@eltasolar.dk
+            </div>
+          </div>
+          
+          <div class="doc-title">
+            FAKTURA
+            <div class="doc-number">Fakturanr: ${faktura.invoice_number}</div>
+          </div>
+          
+          <div class="info-grid">
+            <div class="info-box">
+              <div class="info-label">Faktureres til</div>
+              <div class="info-value">
+                <strong>${faktura.customer_company || faktura.customer_name || ''}</strong><br>
+                ${faktura.customer_address || ''}<br>
+                ${faktura.customer_zip || ''} ${faktura.customer_city || ''}<br>
+                ${faktura.customer_cvr ? 'CVR: ' + faktura.customer_cvr : ''}
+              </div>
+            </div>
+            <div class="info-box">
+              <div class="info-label">Fakturadetaljer</div>
+              <div class="info-value">
+                <strong>Fakturadato:</strong> ${new Date(faktura.invoice_date).toLocaleDateString('da-DK')}<br>
+                <strong>Forfaldsdato:</strong> ${faktura.due_date ? new Date(faktura.due_date).toLocaleDateString('da-DK') : '-'}<br>
+                ${faktura.orders ? '<strong>Ordre:</strong> #' + faktura.orders.order_number : ''}
+              </div>
+            </div>
+          </div>
+          
+          <div class="info-box" style="margin-bottom: 24px;">
+            <div class="info-label">Vedrørende</div>
+            <div class="info-value"><strong style="font-size: 16px;">${faktura.title}</strong></div>
+          </div>
+          
+          <table class="lines-table">
+            <thead>
+              <tr>
+                <th style="width: 45%;">Beskrivelse</th>
+                <th style="width: 12%;">Type</th>
+                <th style="width: 13%;">Antal</th>
+                <th style="width: 15%;">Enhedspris</th>
+                <th style="width: 15%;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${lines.map(l => `
+                <tr>
+                  <td>${l.title}${l.description ? '<br><span style="font-size:10px;color:#666;">' + l.description + '</span>' : ''}</td>
+                  <td>${typeLabels[l.type] || l.type}</td>
+                  <td>${l.quantity} ${l.unit}</td>
+                  <td>${Number(l.unit_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</td>
+                  <td>${Number(l.total).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          
+          <div class="totals">
+            <div class="totals-row">
+              <span class="label">Subtotal</span>
+              <span class="value">${Number(faktura.subtotal).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</span>
+            </div>
+            <div class="totals-row">
+              <span class="label">Moms (${faktura.vat_rate}%)</span>
+              <span class="value">${Number(faktura.vat_amount).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</span>
+            </div>
+            <div class="totals-row total">
+              <span class="label">Total at betale</span>
+              <span class="value">${Number(faktura.total).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</span>
+            </div>
+          </div>
+          
+          <div class="payment-box">
+            <div class="payment-title">💳 Betalingsoplysninger</div>
+            <div style="font-size: 12px;">
+              <strong>Bank:</strong> Danske Bank<br>
+              <strong>Reg.nr:</strong> 1234 &nbsp; <strong>Kontonr:</strong> 12345678<br>
+              <strong>Ved betaling anfør:</strong> Faktura ${faktura.invoice_number}
+            </div>
+          </div>
+          
+          <div class="footer">
+            <div>
+              <strong>EltaSolar ApS</strong> • CVR: 12345678 • kontakt@eltasolar.dk • Tlf: 12 34 56 78
+            </div>
+            <div>
+              Side 1 af 1
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.print();
   };
 
   const statusColors = {
@@ -3939,6 +4348,16 @@ TOTAL: ${Number(faktura.total).toLocaleString('da-DK', { minimumFractionDigits: 
   }
 
   // Faktura-liste
+  // Beregn status-tæller og beløb
+  const statusCounts = {
+    kladde: fakturaer.filter(f => f.status === 'kladde').length,
+    sendt: fakturaer.filter(f => f.status === 'sendt').length,
+    betalt: fakturaer.filter(f => f.status === 'betalt').length,
+    annulleret: fakturaer.filter(f => f.status === 'annulleret').length
+  };
+  const totalUdestaaende = fakturaer.filter(f => f.status === 'sendt').reduce((sum, f) => sum + Number(f.total || 0), 0);
+  const totalBetalt = fakturaer.filter(f => f.status === 'betalt').reduce((sum, f) => sum + Number(f.total || 0), 0);
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -3946,6 +4365,43 @@ TOTAL: ${Number(faktura.total).toLocaleString('da-DK', { minimumFractionDigits: 
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Fakturaer</h1>
           <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filtered.length} af {fakturaer.length} fakturaer</p>
         </div>
+      </div>
+
+      {/* Økonomi-overblik */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, marginBottom: 24 }}>
+        <div style={{ ...STYLES.card, background: '#F0FDF4', textAlign: 'center' }}>
+          <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>💰 Betalt</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: '#059669' }}>{totalBetalt.toLocaleString('da-DK')} kr.</div>
+        </div>
+        <div style={{ ...STYLES.card, background: totalUdestaaende > 0 ? '#FEF3C7' : '#F9FAFB', textAlign: 'center' }}>
+          <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>📋 Udestående</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: totalUdestaaende > 0 ? '#D97706' : COLORS.text }}>{totalUdestaaende.toLocaleString('da-DK')} kr.</div>
+        </div>
+      </div>
+
+      {/* Status-overblik */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
+        {[
+          { key: 'kladde', label: 'Kladde', color: '#6B7280' },
+          { key: 'sendt', label: 'Sendt', color: '#1D4ED8' },
+          { key: 'betalt', label: 'Betalt', color: '#059669' },
+          { key: 'annulleret', label: 'Annulleret', color: '#DC2626' }
+        ].map(s => (
+          <div 
+            key={s.key}
+            onClick={() => setFilterStatus(filterStatus === s.key ? 'alle' : s.key)}
+            style={{ 
+              padding: '8px 16px', borderRadius: 8, cursor: 'pointer',
+              background: filterStatus === s.key ? s.color : `${s.color}10`,
+              color: filterStatus === s.key ? 'white' : s.color,
+              fontWeight: 600, fontSize: 13,
+              border: `2px solid ${s.color}`,
+              transition: 'all 0.2s'
+            }}
+          >
+            {statusCounts[s.key]} {s.label}
+          </div>
+        ))}
       </div>
 
       {/* Søgning og filtrering */}
