@@ -98,6 +98,7 @@ export default function App() {
               {section === 'kunder' && <KunderSystem onNavigateToProjekt={navigateToProjekt} />}
               {section === 'projekter' && <ProjekterSystem initialProjektId={selectedProjektId} onProjektOpened={() => setSelectedProjektId(null)} />}
               {section === 'ordrer' && <OrdreSystem />}
+              {section === 'fakturaer' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <FakturaSystem />}
               {section === 'mineopgaver' && profile?.role === 'montoer' && <MineOpgaverSystem />}
               {section === 'pakker' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <PakkerSystem />}
               {section === 'katalog' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder') && <VarekatalogSystem />}
@@ -153,6 +154,7 @@ function Navigation({ section, setSection }) {
   const { profile, logout } = useAuth();
   const isAdmin = profile?.role === 'admin';
   const canManage = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+  const canInvoice = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
   const isMontoer = profile?.role === 'montoer';
   
   const menuItems = [
@@ -160,6 +162,7 @@ function Navigation({ section, setSection }) {
     { id: 'kunder', label: 'Kunder', icon: '👥' },
     { id: 'projekter', label: 'Projekter', icon: '🔧' },
     { id: 'ordrer', label: 'Ordrer', icon: '🏗️' },
+    { id: 'fakturaer', label: 'Fakturaer', icon: '🧾', invoiceOnly: true },
     { id: 'mineopgaver', label: 'Mine opgaver', icon: '✅', montoerOnly: true },
     { id: 'pakker', label: 'Pakker', icon: '📦', managerOnly: true },
     { id: 'katalog', label: 'Varekatalog', icon: '🏷️', managerOnly: true },
@@ -175,7 +178,7 @@ function Navigation({ section, setSection }) {
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {menuItems.map(item => (
-            (!item.adminOnly || isAdmin) && (!item.managerOnly || canManage) && (!item.montoerOnly || isMontoer) && (
+            (!item.adminOnly || isAdmin) && (!item.managerOnly || canManage) && (!item.montoerOnly || isMontoer) && (!item.invoiceOnly || canInvoice) && (
               <button key={item.id} onClick={() => setSection(item.id)} style={{
                 background: section === item.id ? COLORS.primary : 'transparent',
                 color: section === item.id ? 'white' : COLORS.text,
@@ -2449,6 +2452,7 @@ function OrdreSystem() {
   const canViewEconomy = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
   const canManageTasks = profile?.role === 'admin' || profile?.role === 'serviceleder';
   const canEditMaterials = profile?.role === 'admin' || profile?.role === 'serviceleder' || profile?.role === 'montoer';
+  const canInvoice = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
 
   useEffect(() => { loadOrdrer(); loadMarginSettings(); loadMontoerer(); loadProdukter(); }, []);
 
@@ -2642,6 +2646,99 @@ function OrdreSystem() {
     loadMaterials(selectedOrdre.id);
   };
 
+  // Opret faktura fra ordre
+  const createInvoiceFromOrder = async (ordre) => {
+    if (!confirm(`Opret faktura-kladde for ordre #${ordre.order_number}?`)) return;
+    
+    // Hent kunde-info
+    const { data: customer } = await supabase.from('customers').select('*').eq('id', ordre.customer_id).single();
+    
+    // Hent materialer (faktisk forbrug)
+    const { data: mats } = await supabase.from('order_materials').select('*').eq('order_id', ordre.id);
+    
+    // Beregn totaler fra materialer
+    const lines = (mats || []).filter(m => m.actual_quantity > 0).map((m, i) => ({
+      type: m.type,
+      title: m.title,
+      quantity: m.actual_quantity,
+      unit: m.type === 'timer' ? 'timer' : 'stk',
+      unit_price: m.sale_price,
+      total: m.actual_quantity * m.sale_price,
+      sort_order: i,
+      product_id: m.product_id
+    }));
+    
+    // Hvis ingen materialer med faktisk forbrug, brug ordrelinjer
+    if (lines.length === 0) {
+      const { data: orderLines } = await supabase.from('order_lines').select('*').eq('order_id', ordre.id);
+      (orderLines || []).forEach((l, i) => {
+        lines.push({
+          type: l.type,
+          title: l.title,
+          quantity: l.quantity,
+          unit: l.type === 'timer' ? 'timer' : 'stk',
+          unit_price: l.sale_price,
+          total: l.quantity * l.sale_price,
+          sort_order: i,
+          product_id: l.product_id
+        });
+      });
+    }
+    
+    const subtotal = lines.reduce((sum, l) => sum + l.total, 0);
+    const vatRate = 25;
+    const vatAmount = subtotal * (vatRate / 100);
+    const total = subtotal + vatAmount;
+    
+    // Opret faktura
+    const { data: newInvoice, error: invoiceError } = await supabase.from('invoices').insert([{
+      order_id: ordre.id,
+      project_id: ordre.project_id,
+      customer_id: ordre.customer_id,
+      customer_name: customer?.name || '',
+      customer_company: customer?.company || '',
+      customer_address: customer?.address || '',
+      customer_zip: customer?.zip || '',
+      customer_city: customer?.city || '',
+      customer_cvr: customer?.cvr || '',
+      customer_email: customer?.email || '',
+      title: ordre.title,
+      description: ordre.description,
+      invoice_date: new Date().toISOString().split('T')[0],
+      due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      subtotal: subtotal,
+      vat_rate: vatRate,
+      vat_amount: vatAmount,
+      total: total,
+      status: 'kladde',
+      is_locked: false,
+      created_by: user?.id
+    }]).select();
+    
+    if (invoiceError) { 
+      alert('Fejl ved oprettelse af faktura: ' + invoiceError.message); 
+      return; 
+    }
+    
+    // Opret fakturalinjer
+    if (newInvoice && newInvoice[0] && lines.length > 0) {
+      const invoiceLines = lines.map(l => ({
+        invoice_id: newInvoice[0].id,
+        product_id: l.product_id,
+        type: l.type,
+        title: l.title,
+        quantity: l.quantity,
+        unit: l.unit,
+        unit_price: l.unit_price,
+        total: l.total,
+        sort_order: l.sort_order
+      }));
+      await supabase.from('invoice_lines').insert(invoiceLines);
+    }
+    
+    alert(`✅ Faktura #${newInvoice[0].invoice_number} oprettet som kladde.\n\nGå til "🧾 Fakturaer" for at redigere og sende.`);
+  };
+
   const taskStatusColors = {
     planlagt: { bg: '#DBEAFE', color: '#1D4ED8' },
     igang: { bg: '#FEF3C7', color: '#D97706' },
@@ -2801,8 +2898,11 @@ function OrdreSystem() {
                 {selectedOrdre.status === 'igang' && (
                   <button onClick={() => updateOrdreStatus(selectedOrdre, 'afsluttet')} style={{ ...STYLES.primaryBtn, background: '#059669' }}>✅ Afslut</button>
                 )}
+                {selectedOrdre.status === 'afsluttet' && canInvoice && (
+                  <button onClick={() => createInvoiceFromOrder(selectedOrdre)} style={{ ...STYLES.primaryBtn, background: '#7C3AED' }}>🧾 Opret faktura</button>
+                )}
                 {selectedOrdre.status === 'afsluttet' && isAdmin && (
-                  <button onClick={() => updateOrdreStatus(selectedOrdre, 'faktureret')} style={{ ...STYLES.primaryBtn, background: '#4F46E5' }}>💰 Faktureret</button>
+                  <button onClick={() => updateOrdreStatus(selectedOrdre, 'faktureret')} style={{ ...STYLES.secondaryBtn }}>💰 Marker faktureret</button>
                 )}
               </div>
             )}
@@ -3468,6 +3568,510 @@ function MineOpgaverSystem() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// FAKTURA SYSTEM
+// Status: kladde → sendt → betalt / annulleret
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function FakturaSystem() {
+  const { user, profile } = useAuth();
+  const [fakturaer, setFakturaer] = useState([]);
+  const [selectedFaktura, setSelectedFaktura] = useState(null);
+  const [fakturaLinjer, setFakturaLinjer] = useState([]);
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('alle');
+  const [showLinjeModal, setShowLinjeModal] = useState(false);
+  const [editingLinje, setEditingLinje] = useState(null);
+
+  // Rettigheder
+  const isAdmin = profile?.role === 'admin';
+  const canEdit = profile?.role === 'admin' || profile?.role === 'saelger';
+  const canSend = profile?.role === 'admin' || profile?.role === 'saelger';
+
+  useEffect(() => { loadFakturaer(); }, []);
+
+  const loadFakturaer = async () => {
+    const { data, error } = await supabase
+      .from('invoices')
+      .select(`
+        *,
+        orders(id, order_number, title),
+        projects(id, name),
+        customers(id, name, company)
+      `)
+      .order('created_at', { ascending: false });
+    if (error) { console.error('Fejl:', error); return; }
+    setFakturaer(data || []);
+  };
+
+  const loadFakturaLinjer = async (fakturaId) => {
+    const { data, error } = await supabase
+      .from('invoice_lines')
+      .select('*')
+      .eq('invoice_id', fakturaId)
+      .order('sort_order');
+    if (error) { console.error('Fejl:', error); return; }
+    setFakturaLinjer(data || []);
+  };
+
+  useEffect(() => {
+    if (selectedFaktura) loadFakturaLinjer(selectedFaktura.id);
+  }, [selectedFaktura?.id]);
+
+  const recalcTotals = async (fakturaId) => {
+    const { data: lines } = await supabase.from('invoice_lines').select('*').eq('invoice_id', fakturaId);
+    const subtotal = (lines || []).reduce((sum, l) => sum + (l.quantity * l.unit_price), 0);
+    const vatRate = selectedFaktura?.vat_rate || 25;
+    const vatAmount = subtotal * (vatRate / 100);
+    const total = subtotal + vatAmount;
+    
+    await supabase.from('invoices').update({ subtotal, vat_amount: vatAmount, total, updated_at: new Date().toISOString() }).eq('id', fakturaId);
+    loadFakturaer();
+    if (selectedFaktura) {
+      setSelectedFaktura({ ...selectedFaktura, subtotal, vat_amount: vatAmount, total });
+    }
+  };
+
+  const saveLinje = async (form) => {
+    const total = (parseFloat(form.quantity) || 0) * (parseFloat(form.unit_price) || 0);
+    const payload = {
+      invoice_id: selectedFaktura.id,
+      type: form.type || 'materiale',
+      title: form.title,
+      description: form.description || null,
+      quantity: parseFloat(form.quantity) || 1,
+      unit: form.unit || 'stk',
+      unit_price: parseFloat(form.unit_price) || 0,
+      total: total
+    };
+
+    if (editingLinje) {
+      const { error } = await supabase.from('invoice_lines').update(payload).eq('id', editingLinje.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    } else {
+      payload.sort_order = fakturaLinjer.length;
+      const { error } = await supabase.from('invoice_lines').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    }
+    setShowLinjeModal(false);
+    setEditingLinje(null);
+    loadFakturaLinjer(selectedFaktura.id);
+    recalcTotals(selectedFaktura.id);
+  };
+
+  const deleteLinje = async (linje) => {
+    if (!confirm(`Slet linje "${linje.title}"?`)) return;
+    const { error } = await supabase.from('invoice_lines').delete().eq('id', linje.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadFakturaLinjer(selectedFaktura.id);
+    recalcTotals(selectedFaktura.id);
+  };
+
+  const sendFaktura = async (faktura) => {
+    if (!confirm(`Send faktura #${faktura.invoice_number} til kunden?\n\nFakturaen låses herefter.`)) return;
+    const { error } = await supabase.from('invoices').update({
+      status: 'sendt',
+      is_locked: true,
+      sent_at: new Date().toISOString(),
+      sent_by: user?.id,
+      updated_at: new Date().toISOString()
+    }).eq('id', faktura.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadFakturaer();
+    if (selectedFaktura?.id === faktura.id) {
+      setSelectedFaktura({ ...selectedFaktura, status: 'sendt', is_locked: true });
+    }
+  };
+
+  const markBetalt = async (faktura) => {
+    if (!confirm(`Marker faktura #${faktura.invoice_number} som betalt?`)) return;
+    const { error } = await supabase.from('invoices').update({
+      status: 'betalt',
+      is_locked: true,
+      paid_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq('id', faktura.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadFakturaer();
+    if (selectedFaktura?.id === faktura.id) {
+      setSelectedFaktura({ ...selectedFaktura, status: 'betalt', is_locked: true });
+    }
+  };
+
+  const annullerFaktura = async (faktura) => {
+    if (!confirm(`Annuller faktura #${faktura.invoice_number}?\n\nDenne handling kan ikke fortrydes.`)) return;
+    const { error } = await supabase.from('invoices').update({
+      status: 'annulleret',
+      is_locked: true,
+      updated_at: new Date().toISOString()
+    }).eq('id', faktura.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadFakturaer();
+    if (selectedFaktura?.id === faktura.id) {
+      setSelectedFaktura({ ...selectedFaktura, status: 'annulleret', is_locked: true });
+    }
+  };
+
+  const deleteFaktura = async (faktura) => {
+    if (faktura.status !== 'kladde') {
+      alert('Kun kladder kan slettes');
+      return;
+    }
+    if (!confirm(`Slet faktura #${faktura.invoice_number}?\n\nDenne handling kan ikke fortrydes.`)) return;
+    const { error } = await supabase.from('invoices').delete().eq('id', faktura.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadFakturaer();
+    setSelectedFaktura(null);
+  };
+
+  const generatePDF = (faktura) => {
+    const lines = fakturaLinjer;
+    const pdfContent = `
+FAKTURA #${faktura.invoice_number}
+====================================
+Dato: ${new Date(faktura.invoice_date).toLocaleDateString('da-DK')}
+Forfald: ${faktura.due_date ? new Date(faktura.due_date).toLocaleDateString('da-DK') : '-'}
+
+KUNDE:
+${faktura.customer_company || faktura.customer_name || ''}
+${faktura.customer_address || ''}
+${faktura.customer_zip || ''} ${faktura.customer_city || ''}
+CVR: ${faktura.customer_cvr || '-'}
+
+LINJER:
+${lines.map(l => `${l.title}: ${l.quantity} x ${Number(l.unit_price).toFixed(2)} = ${Number(l.total).toFixed(2)} kr.`).join('\n')}
+
+====================================
+Subtotal: ${Number(faktura.subtotal).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+Moms (${faktura.vat_rate}%): ${Number(faktura.vat_amount).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+TOTAL: ${Number(faktura.total).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+====================================
+    `;
+    
+    const blob = new Blob([pdfContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Faktura_${faktura.invoice_number}.txt`;
+    a.click();
+  };
+
+  const statusColors = {
+    kladde: { bg: '#F3F4F6', color: '#6B7280' },
+    sendt: { bg: '#DBEAFE', color: '#1D4ED8' },
+    betalt: { bg: '#D1FAE5', color: '#059669' },
+    annulleret: { bg: '#FEE2E2', color: '#DC2626' }
+  };
+
+  const statusLabels = {
+    kladde: 'Kladde',
+    sendt: 'Sendt',
+    betalt: 'Betalt',
+    annulleret: 'Annulleret'
+  };
+
+  const typeLabels = { materiale: '🔩 Materiale', timer: '⏱️ Timer', ydelse: '📋 Ydelse' };
+
+  // Filtrering
+  let filtered = fakturaer;
+  if (filterStatus !== 'alle') {
+    filtered = fakturaer.filter(f => f.status === filterStatus);
+  }
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filtered = filtered.filter(f =>
+      (f.invoice_number?.toString() || '').includes(s) ||
+      (f.title || '').toLowerCase().includes(s) ||
+      (f.customer_company || '').toLowerCase().includes(s) ||
+      (f.customer_name || '').toLowerCase().includes(s)
+    );
+  }
+
+  const canEditFaktura = (f) => f.status === 'kladde' && !f.is_locked && canEdit;
+
+  // Faktura-detaljevisning
+  if (selectedFaktura) {
+    const isEditable = canEditFaktura(selectedFaktura);
+    
+    return (
+      <div>
+        <button onClick={() => setSelectedFaktura(null)} style={{ ...STYLES.secondaryBtn, marginBottom: 24 }}>← Tilbage til fakturaer</button>
+        
+        <div style={{ ...STYLES.card, marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Faktura #{selectedFaktura.invoice_number}</h1>
+                <span style={{ 
+                  padding: '4px 12px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+                  background: statusColors[selectedFaktura.status]?.bg,
+                  color: statusColors[selectedFaktura.status]?.color
+                }}>{statusLabels[selectedFaktura.status]}</span>
+                {selectedFaktura.is_locked && <span style={{ color: COLORS.textLight }}>🔒</span>}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 500, marginTop: 8 }}>{selectedFaktura.title}</div>
+              <div style={{ marginTop: 8, fontSize: 14, color: COLORS.textLight }}>
+                {selectedFaktura.orders && `🏗️ Ordre #${selectedFaktura.orders.order_number}`}
+                {selectedFaktura.customer_company && ` • 👤 ${selectedFaktura.customer_company}`}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => generatePDF(selectedFaktura)} style={STYLES.secondaryBtn}>📄 Download</button>
+              {selectedFaktura.status === 'kladde' && canSend && (
+                <button onClick={() => sendFaktura(selectedFaktura)} style={{ ...STYLES.primaryBtn, background: '#1D4ED8' }}>📤 Send</button>
+              )}
+              {selectedFaktura.status === 'sendt' && canEdit && (
+                <button onClick={() => markBetalt(selectedFaktura)} style={{ ...STYLES.primaryBtn, background: '#059669' }}>💰 Marker betalt</button>
+              )}
+              {(selectedFaktura.status === 'kladde' || selectedFaktura.status === 'sendt') && isAdmin && (
+                <button onClick={() => annullerFaktura(selectedFaktura)} style={{ ...STYLES.secondaryBtn, color: COLORS.error }}>❌ Annuller</button>
+              )}
+              {selectedFaktura.status === 'kladde' && isAdmin && (
+                <button onClick={() => deleteFaktura(selectedFaktura)} style={{ ...STYLES.secondaryBtn, color: COLORS.error }}>🗑️ Slet</button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Kunde og datoer */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
+          <div style={STYLES.card}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 0, marginBottom: 12 }}>👤 Kunde</h3>
+            <div style={{ fontSize: 14 }}>
+              <div style={{ fontWeight: 500 }}>{selectedFaktura.customer_company || selectedFaktura.customer_name}</div>
+              <div style={{ color: COLORS.textLight }}>{selectedFaktura.customer_address}</div>
+              <div style={{ color: COLORS.textLight }}>{selectedFaktura.customer_zip} {selectedFaktura.customer_city}</div>
+              {selectedFaktura.customer_cvr && <div style={{ color: COLORS.textLight, marginTop: 4 }}>CVR: {selectedFaktura.customer_cvr}</div>}
+            </div>
+          </div>
+          <div style={STYLES.card}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 0, marginBottom: 12 }}>📅 Datoer</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, color: COLORS.textLight }}>Fakturadato</div>
+                <div style={{ fontWeight: 500 }}>{new Date(selectedFaktura.invoice_date).toLocaleDateString('da-DK')}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: COLORS.textLight }}>Forfaldsdato</div>
+                <div style={{ fontWeight: 500 }}>{selectedFaktura.due_date ? new Date(selectedFaktura.due_date).toLocaleDateString('da-DK') : '-'}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Totaler */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
+          <div style={{ ...STYLES.card, textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>SUBTOTAL</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{Number(selectedFaktura.subtotal).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+          </div>
+          <div style={{ ...STYLES.card, textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>MOMS ({selectedFaktura.vat_rate}%)</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{Number(selectedFaktura.vat_amount).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+          </div>
+          <div style={{ ...STYLES.card, textAlign: 'center', background: '#D1FAE5' }}>
+            <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 4 }}>TOTAL</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#059669' }}>{Number(selectedFaktura.total).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</div>
+          </div>
+        </div>
+
+        {/* Linjer */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Fakturalinjer ({fakturaLinjer.length})</h2>
+          {isEditable && (
+            <button onClick={() => { setEditingLinje(null); setShowLinjeModal(true); }} style={STYLES.primaryBtn}>+ Tilføj linje</button>
+          )}
+        </div>
+
+        <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+          {fakturaLinjer.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>Ingen linjer på fakturaen</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Type</th>
+                <th style={STYLES.th}>Beskrivelse</th>
+                <th style={{ ...STYLES.th, textAlign: 'right' }}>Antal</th>
+                <th style={{ ...STYLES.th, textAlign: 'right' }}>Enhedspris</th>
+                <th style={{ ...STYLES.th, textAlign: 'right' }}>Total</th>
+                {isEditable && <th style={STYLES.th}></th>}
+              </tr></thead>
+              <tbody>
+                {fakturaLinjer.map(l => (
+                  <tr key={l.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                    <td style={STYLES.td}>
+                      <span style={{ fontSize: 12 }}>{typeLabels[l.type] || l.type}</span>
+                    </td>
+                    <td style={STYLES.td}>
+                      <div style={{ fontWeight: 500 }}>{l.title}</div>
+                      {l.description && <div style={{ fontSize: 12, color: COLORS.textLight }}>{l.description}</div>}
+                    </td>
+                    <td style={{ ...STYLES.td, textAlign: 'right' }}>{l.quantity} {l.unit}</td>
+                    <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.unit_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
+                    <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>{Number(l.total).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
+                    {isEditable && (
+                      <td style={STYLES.td}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button onClick={() => { setEditingLinje(l); setShowLinjeModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>✏️</button>
+                          <button onClick={() => deleteLinje(l)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>🗑️</button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Linje Modal */}
+        {showLinjeModal && (
+          <Modal title={editingLinje ? 'Rediger linje' : 'Tilføj linje'} onClose={() => { setShowLinjeModal(false); setEditingLinje(null); }}>
+            <FakturaLinjeForm initial={editingLinje} onSave={saveLinje} onCancel={() => { setShowLinjeModal(false); setEditingLinje(null); }} />
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // Faktura-liste
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>Fakturaer</h1>
+          <p style={{ color: COLORS.textLight, marginTop: 4 }}>{filtered.length} af {fakturaer.length} fakturaer</p>
+        </div>
+      </div>
+
+      {/* Søgning og filtrering */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 250px' }}>
+            <input type="text" placeholder="🔍 Søg fakturanummer, titel, kunde..." value={search} onChange={e => setSearch(e.target.value)} style={STYLES.input} />
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={STYLES.select}>
+              <option value="alle">Alle status</option>
+              <option value="kladde">Kladde</option>
+              <option value="sendt">Sendt</option>
+              <option value="betalt">Betalt</option>
+              <option value="annulleret">Annulleret</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ ...STYLES.card, textAlign: 'center', padding: 48, color: COLORS.textLight }}>
+          {fakturaer.length === 0 ? 'Ingen fakturaer endnu. Opret en faktura fra en ordre.' : 'Ingen fakturaer matcher søgningen'}
+        </div>
+      ) : (
+        <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr style={{ background: COLORS.bg }}>
+              <th style={STYLES.th}>Faktura</th>
+              <th style={STYLES.th}>Kunde</th>
+              <th style={STYLES.th}>Ordre</th>
+              <th style={{ ...STYLES.th, textAlign: 'right' }}>Total</th>
+              <th style={STYLES.th}>Status</th>
+              <th style={STYLES.th}>Dato</th>
+            </tr></thead>
+            <tbody>
+              {filtered.map(f => (
+                <tr key={f.id} onClick={() => setSelectedFaktura(f)} style={{ borderTop: `1px solid ${COLORS.border}`, cursor: 'pointer', background: f.status === 'betalt' ? '#F0FDF4' : 'transparent' }}>
+                  <td style={STYLES.td}>
+                    <div style={{ fontWeight: 600, color: COLORS.primary }}>#{f.invoice_number}</div>
+                    <div style={{ fontSize: 13, color: COLORS.textLight }}>{f.title}</div>
+                  </td>
+                  <td style={STYLES.td}>
+                    {f.customer_company || f.customer_name || '-'}
+                  </td>
+                  <td style={STYLES.td}>
+                    {f.orders ? `#${f.orders.order_number}` : '-'}
+                  </td>
+                  <td style={{ ...STYLES.td, textAlign: 'right', fontWeight: 600 }}>
+                    {Number(f.total).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+                  </td>
+                  <td style={STYLES.td}>
+                    <span style={{ 
+                      padding: '4px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                      background: statusColors[f.status]?.bg,
+                      color: statusColors[f.status]?.color
+                    }}>{statusLabels[f.status]}</span>
+                  </td>
+                  <td style={{ ...STYLES.td, color: COLORS.textLight }}>
+                    {new Date(f.invoice_date).toLocaleDateString('da-DK')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// FakturaLinjeForm
+function FakturaLinjeForm({ initial, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    type: initial?.type || 'materiale',
+    title: initial?.title || '',
+    description: initial?.description || '',
+    quantity: initial?.quantity || 1,
+    unit: initial?.unit || 'stk',
+    unit_price: initial?.unit_price || ''
+  });
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Type</label>
+          <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} style={STYLES.select}>
+            <option value="materiale">Materiale</option>
+            <option value="timer">Timer</option>
+            <option value="ydelse">Ydelse</option>
+          </select>
+        </div>
+        <div>
+          <label style={STYLES.label}>Enhed</label>
+          <input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} style={STYLES.input} placeholder="stk, timer, m2..." />
+        </div>
+      </div>
+      <div>
+        <label style={STYLES.label}>Beskrivelse *</label>
+        <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={STYLES.input} placeholder="F.eks. Solpaneler 400W" />
+      </div>
+      <div>
+        <label style={STYLES.label}>Yderligere beskrivelse</label>
+        <input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} style={STYLES.input} placeholder="Valgfrit..." />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Antal</label>
+          <input type="number" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} style={STYLES.input} step="0.01" min="0" />
+        </div>
+        <div>
+          <label style={STYLES.label}>Enhedspris (kr.)</label>
+          <input type="number" value={form.unit_price} onChange={e => setForm({ ...form, unit_price: e.target.value })} style={STYLES.input} step="0.01" min="0" />
+        </div>
+      </div>
+      <div style={{ padding: 12, background: COLORS.bg, borderRadius: 8 }}>
+        <div style={{ fontSize: 14, color: COLORS.textLight }}>Beregnet total:</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: COLORS.primary }}>
+          {((parseFloat(form.quantity) || 0) * (parseFloat(form.unit_price) || 0)).toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={() => { if (!form.title) { alert('Beskrivelse er påkrævet'); return; } onSave(form); }} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Tilføj linje'}</button>
+      </div>
     </div>
   );
 }
