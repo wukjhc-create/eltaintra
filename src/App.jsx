@@ -95,6 +95,7 @@ export default function App() {
             <Navigation section={section} setSection={(s) => { setSection(s); setSelectedProjektId(null); }} />
             <main style={{ maxWidth: 1400, margin: '0 auto', padding: '24px' }}>
               {section === 'dashboard' && <Dashboard setSection={setSection} />}
+              {section === 'indbakke' && (profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder' || profile?.role === 'montoer') && <IndbakkeSystem />}
               {section === 'kunder' && <KunderSystem onNavigateToProjekt={navigateToProjekt} />}
               {section === 'projekter' && <ProjekterSystem initialProjektId={selectedProjektId} onProjektOpened={() => setSelectedProjektId(null)} />}
               {section === 'ordrer' && <OrdreSystem />}
@@ -155,10 +156,12 @@ function Navigation({ section, setSection }) {
   const isAdmin = profile?.role === 'admin';
   const canManage = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
   const canInvoice = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+  const canLeads = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder' || profile?.role === 'montoer';
   const isMontoer = profile?.role === 'montoer';
   
   const menuItems = [
     { id: 'dashboard', label: 'Overblik', icon: '📊' },
+    { id: 'indbakke', label: 'Indbakke', icon: '📥', leadAccess: true },
     { id: 'kunder', label: 'Kunder', icon: '👥' },
     { id: 'projekter', label: 'Projekter', icon: '🔧' },
     { id: 'ordrer', label: 'Ordrer', icon: '🏗️' },
@@ -178,7 +181,7 @@ function Navigation({ section, setSection }) {
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {menuItems.map(item => (
-            (!item.adminOnly || isAdmin) && (!item.managerOnly || canManage) && (!item.montoerOnly || isMontoer) && (!item.invoiceOnly || canInvoice) && (
+            (!item.adminOnly || isAdmin) && (!item.managerOnly || canManage) && (!item.montoerOnly || isMontoer) && (!item.invoiceOnly || canInvoice) && (!item.leadAccess || canLeads) && (
               <button key={item.id} onClick={() => setSection(item.id)} style={{
                 background: section === item.id ? COLORS.primary : 'transparent',
                 color: section === item.id ? 'white' : COLORS.text,
@@ -450,6 +453,731 @@ function StatCard({ icon, label, value, onClick, color }) {
       <div style={{ fontSize: 32, marginBottom: 8 }}>{icon}</div>
       <div style={{ fontSize: 32, fontWeight: 700, color: color || COLORS.primary }}>{value}</div>
       <div style={{ color: COLORS.textLight, fontSize: 14 }}>{label}</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// INDBAKKE SYSTEM (Leads)
+// Database: leads - id, source, status, name, email, phone, company, cvr, address, zipcode, city,
+//           subject, message, assigned_to, priority, notes, converted_at, converted_customer_id, converted_project_id
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function IndbakkeSystem() {
+  const { profile } = useContext(AuthContext);
+  const [leads, setLeads] = useState([]);
+  const [medarbejdere, setMedarbejdere] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [editingLead, setEditingLead] = useState(null);
+  const [selectedLead, setSelectedLead] = useState(null);
+  const [showKonverterModal, setShowKonverterModal] = useState(false);
+  
+  // Filtre
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('alle');
+  const [filterKilde, setFilterKilde] = useState('alle');
+  const [filterAnsvarlig, setFilterAnsvarlig] = useState('alle');
+  
+  const canEdit = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+  const canDelete = profile?.role === 'admin' || profile?.role === 'saelger';
+
+  useEffect(() => { 
+    loadLeads(); 
+    loadMedarbejdere();
+  }, []);
+
+  const loadLeads = async () => {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('*, assigned_profile:profiles!leads_assigned_to_fkey(id, name, email)')
+      .order('created_at', { ascending: false });
+    if (error) { console.error('Fejl ved load af leads:', error); return; }
+    setLeads(data || []);
+  };
+
+  const loadMedarbejdere = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, name, email, role')
+      .in('role', ['admin', 'saelger', 'serviceleder'])
+      .eq('active', true)
+      .order('name');
+    setMedarbejdere(data || []);
+  };
+
+  const saveLead = async (form) => {
+    const payload = {
+      source: form.source || 'manual',
+      status: form.status || 'new',
+      name: form.name || null,
+      email: form.email || null,
+      phone: form.phone || null,
+      company: form.company || null,
+      cvr: form.cvr || null,
+      address: form.address || null,
+      zipcode: form.zipcode || null,
+      city: form.city || null,
+      subject: form.subject || null,
+      message: form.message || null,
+      assigned_to: form.assigned_to || null,
+      priority: form.priority || 'normal',
+      notes: form.notes || null,
+      updated_at: new Date().toISOString()
+    };
+
+    if (editingLead) {
+      const { error } = await supabase.from('leads').update(payload).eq('id', editingLead.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    } else {
+      const { error } = await supabase.from('leads').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    }
+    setShowModal(false);
+    setEditingLead(null);
+    loadLeads();
+  };
+
+  const deleteLead = async (lead) => {
+    if (!confirm(`Slet lead "${lead.name || lead.subject || 'Uden navn'}"?`)) return;
+    const { error } = await supabase.from('leads').delete().eq('id', lead.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    if (selectedLead?.id === lead.id) setSelectedLead(null);
+    loadLeads();
+  };
+
+  const updateLeadStatus = async (lead, newStatus) => {
+    const { error } = await supabase.from('leads').update({ 
+      status: newStatus, 
+      updated_at: new Date().toISOString() 
+    }).eq('id', lead.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    if (selectedLead?.id === lead.id) {
+      setSelectedLead({ ...selectedLead, status: newStatus });
+    }
+    loadLeads();
+  };
+
+  const assignLead = async (lead, assignedTo) => {
+    const { error } = await supabase.from('leads').update({ 
+      assigned_to: assignedTo || null,
+      updated_at: new Date().toISOString()
+    }).eq('id', lead.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadLeads();
+    if (selectedLead?.id === lead.id) {
+      const medarbejder = medarbejdere.find(m => m.id === assignedTo);
+      setSelectedLead({ ...selectedLead, assigned_to: assignedTo, assigned_profile: medarbejder });
+    }
+  };
+
+  const konverterTilProjekt = async (lead) => {
+    try {
+      // 1. Check om lead allerede er konverteret
+      if (lead.status === 'converted') {
+        alert('Dette lead er allerede konverteret til et projekt.');
+        return;
+      }
+
+      // 2. Opret eller find kunde
+      let customerId = null;
+      
+      // Tjek om kunde eksisterer baseret på email eller CVR
+      if (lead.email || lead.cvr) {
+        const { data: existingCustomer } = await supabase
+          .from('customers')
+          .select('id')
+          .or(`email.eq.${lead.email || 'NOMATCH'},cvr.eq.${lead.cvr || 'NOMATCH'}`)
+          .limit(1)
+          .single();
+        
+        if (existingCustomer) {
+          customerId = existingCustomer.id;
+        }
+      }
+
+      // Opret ny kunde hvis ikke fundet
+      if (!customerId) {
+        const { data: newCustomer, error: customerError } = await supabase
+          .from('customers')
+          .insert([{
+            name: lead.name || 'Ukendt',
+            company: lead.company || null,
+            cvr: lead.cvr || null,
+            email: lead.email || null,
+            phone: lead.phone || null,
+            address: lead.address || null,
+            zip: lead.zipcode || null,
+            city: lead.city || null,
+            notes: `Oprettet fra lead: ${lead.subject || 'Ingen emne'}`
+          }])
+          .select()
+          .single();
+        
+        if (customerError) throw customerError;
+        customerId = newCustomer.id;
+      }
+
+      // 3. Opret projekt
+      const { data: newProject, error: projectError } = await supabase
+        .from('projects')
+        .insert([{
+          customer_id: customerId,
+          name: lead.subject || `Projekt for ${lead.name || lead.company || 'Ukendt'}`,
+          description: lead.message || null,
+          address: lead.address || null,
+          zip: lead.zipcode || null,
+          city: lead.city || null,
+          status: 'aktiv'
+        }])
+        .select()
+        .single();
+      
+      if (projectError) throw projectError;
+
+      // 4. Opdater lead status
+      const { error: updateError } = await supabase
+        .from('leads')
+        .update({
+          status: 'converted',
+          converted_at: new Date().toISOString(),
+          converted_by: profile.id,
+          converted_customer_id: customerId,
+          converted_project_id: newProject.id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', lead.id);
+      
+      if (updateError) throw updateError;
+
+      alert(`✅ Lead konverteret!\n\nKunde: ${lead.name || lead.company || 'Ukendt'}\nProjekt: ${newProject.name}`);
+      setSelectedLead(null);
+      setShowKonverterModal(false);
+      loadLeads();
+      
+    } catch (error) {
+      console.error('Konverteringsfejl:', error);
+      alert('Fejl ved konvertering: ' + error.message);
+    }
+  };
+
+  // Status config
+  const statusConfig = {
+    new: { label: 'Ny', bg: '#DBEAFE', color: '#1D4ED8', icon: '🆕' },
+    qualified: { label: 'Kvalificeret', bg: '#D1FAE5', color: '#059669', icon: '✅' },
+    rejected: { label: 'Afvist', bg: '#FEE2E2', color: '#DC2626', icon: '❌' },
+    converted: { label: 'Konverteret', bg: '#E0E7FF', color: '#4F46E5', icon: '🎉' }
+  };
+
+  const kildeConfig = {
+    manual: { label: 'Manuel', icon: '✏️' },
+    email: { label: 'E-mail', icon: '📧' },
+    form: { label: 'Formular', icon: '📝' }
+  };
+
+  const priorityConfig = {
+    low: { label: 'Lav', bg: '#F3F4F6', color: '#6B7280' },
+    normal: { label: 'Normal', bg: '#DBEAFE', color: '#1D4ED8' },
+    high: { label: 'Høj', bg: '#FEF3C7', color: '#D97706' },
+    urgent: { label: 'Haster', bg: '#FEE2E2', color: '#DC2626' }
+  };
+
+  // Filtrering
+  let filteredLeads = leads.filter(l => {
+    if (filterStatus !== 'alle' && l.status !== filterStatus) return false;
+    if (filterKilde !== 'alle' && l.source !== filterKilde) return false;
+    if (filterAnsvarlig !== 'alle') {
+      if (filterAnsvarlig === 'unassigned' && l.assigned_to) return false;
+      if (filterAnsvarlig !== 'unassigned' && l.assigned_to !== filterAnsvarlig) return false;
+    }
+    return true;
+  });
+
+  // Søgning
+  if (search.trim()) {
+    const s = search.toLowerCase();
+    filteredLeads = filteredLeads.filter(l =>
+      (l.name || '').toLowerCase().includes(s) ||
+      (l.email || '').toLowerCase().includes(s) ||
+      (l.company || '').toLowerCase().includes(s) ||
+      (l.subject || '').toLowerCase().includes(s) ||
+      (l.phone || '').toLowerCase().includes(s)
+    );
+  }
+
+  // Status tæller
+  const statusCounts = {
+    new: leads.filter(l => l.status === 'new').length,
+    qualified: leads.filter(l => l.status === 'qualified').length,
+    rejected: leads.filter(l => l.status === 'rejected').length,
+    converted: leads.filter(l => l.status === 'converted').length
+  };
+
+  // Detail view
+  if (selectedLead) {
+    const lead = selectedLead;
+    const status = statusConfig[lead.status] || statusConfig.new;
+    const kilde = kildeConfig[lead.source] || kildeConfig.manual;
+    const priority = priorityConfig[lead.priority] || priorityConfig.normal;
+
+    return (
+      <div>
+        <button onClick={() => setSelectedLead(null)} style={{ ...STYLES.secondaryBtn, marginBottom: 24 }}>← Tilbage til indbakke</button>
+        
+        <div style={{ ...STYLES.card, marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>{lead.name || lead.company || 'Ukendt navn'}</h1>
+                <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, background: status.bg, color: status.color }}>
+                  {status.icon} {status.label}
+                </span>
+                <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 13, fontWeight: 600, background: priority.bg, color: priority.color }}>
+                  {priority.label}
+                </span>
+              </div>
+              {lead.subject && <div style={{ fontSize: 16, color: COLORS.textLight }}>{lead.subject}</div>}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {canEdit && lead.status !== 'converted' && (
+                <>
+                  <button onClick={() => konverterTilProjekt(lead)} style={{ ...STYLES.primaryBtn, background: '#059669' }}>
+                    ✅ Opret projekt
+                  </button>
+                  <button onClick={() => updateLeadStatus(lead, 'rejected')} style={{ ...STYLES.secondaryBtn, color: COLORS.error }}>
+                    ❌ Afvis
+                  </button>
+                  <button onClick={() => { setEditingLead(lead); setShowModal(true); }} style={STYLES.secondaryBtn}>
+                    ✏️ Rediger
+                  </button>
+                </>
+              )}
+              {canDelete && <button onClick={() => deleteLead(lead)} style={{ ...STYLES.secondaryBtn, color: COLORS.error }}>🗑️ Slet</button>}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+          {/* Kontaktinfo */}
+          <div style={STYLES.card}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 0, marginBottom: 16 }}>👤 Kontaktinfo</h3>
+            <div style={{ display: 'grid', gap: 12 }}>
+              {lead.name && <div><span style={{ color: COLORS.textLight }}>Navn:</span> <strong>{lead.name}</strong></div>}
+              {lead.company && <div><span style={{ color: COLORS.textLight }}>Firma:</span> <strong>{lead.company}</strong></div>}
+              {lead.cvr && <div><span style={{ color: COLORS.textLight }}>CVR:</span> {lead.cvr}</div>}
+              {lead.email && <div><span style={{ color: COLORS.textLight }}>E-mail:</span> <a href={`mailto:${lead.email}`}>{lead.email}</a></div>}
+              {lead.phone && <div><span style={{ color: COLORS.textLight }}>Telefon:</span> <a href={`tel:${lead.phone}`}>{lead.phone}</a></div>}
+              {(lead.address || lead.zipcode || lead.city) && (
+                <div>
+                  <span style={{ color: COLORS.textLight }}>Adresse:</span><br />
+                  {lead.address && <span>{lead.address}<br /></span>}
+                  {(lead.zipcode || lead.city) && <span>{lead.zipcode} {lead.city}</span>}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Henvendelse */}
+          <div style={STYLES.card}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 0, marginBottom: 16 }}>📝 Henvendelse</h3>
+            <div style={{ display: 'grid', gap: 12 }}>
+              <div><span style={{ color: COLORS.textLight }}>Emne:</span> <strong>{lead.subject || '-'}</strong></div>
+              <div>
+                <span style={{ color: COLORS.textLight }}>Besked:</span>
+                <div style={{ marginTop: 8, padding: 12, background: COLORS.bg, borderRadius: 8, whiteSpace: 'pre-wrap' }}>
+                  {lead.message || 'Ingen besked'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Intern info */}
+          <div style={STYLES.card}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 0, marginBottom: 16 }}>🏢 Intern håndtering</h3>
+            <div style={{ display: 'grid', gap: 12 }}>
+              <div><span style={{ color: COLORS.textLight }}>Kilde:</span> {kilde.icon} {kilde.label}</div>
+              <div>
+                <span style={{ color: COLORS.textLight }}>Ansvarlig:</span>
+                {canEdit && lead.status !== 'converted' ? (
+                  <select 
+                    value={lead.assigned_to || ''} 
+                    onChange={(e) => assignLead(lead, e.target.value || null)}
+                    style={{ ...STYLES.select, marginLeft: 8, padding: '4px 8px', minWidth: 150 }}
+                  >
+                    <option value="">- Ikke tildelt -</option>
+                    {medarbejdere.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span style={{ marginLeft: 8 }}>{lead.assigned_profile?.name || 'Ikke tildelt'}</span>
+                )}
+              </div>
+              <div><span style={{ color: COLORS.textLight }}>Oprettet:</span> {new Date(lead.created_at).toLocaleString('da-DK')}</div>
+              {lead.updated_at !== lead.created_at && (
+                <div><span style={{ color: COLORS.textLight }}>Opdateret:</span> {new Date(lead.updated_at).toLocaleString('da-DK')}</div>
+              )}
+              {lead.notes && (
+                <div>
+                  <span style={{ color: COLORS.textLight }}>Interne noter:</span>
+                  <div style={{ marginTop: 8, padding: 12, background: '#FEF3C7', borderRadius: 8, fontSize: 13 }}>
+                    {lead.notes}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Konvertering info */}
+          {lead.status === 'converted' && (
+            <div style={{ ...STYLES.card, background: '#E0E7FF' }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 0, marginBottom: 16, color: '#4F46E5' }}>🎉 Konverteret</h3>
+              <div style={{ display: 'grid', gap: 12 }}>
+                <div><span style={{ color: '#6366F1' }}>Konverteret:</span> {lead.converted_at ? new Date(lead.converted_at).toLocaleString('da-DK') : '-'}</div>
+                {lead.converted_project_id && (
+                  <div>
+                    <span style={{ color: '#6366F1' }}>Projekt ID:</span> {lead.converted_project_id.slice(0, 8).toUpperCase()}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Modal */}
+        {showModal && (
+          <Modal title={editingLead ? 'Rediger lead' : 'Nyt lead'} onClose={() => { setShowModal(false); setEditingLead(null); }}>
+            <LeadForm 
+              initial={editingLead} 
+              medarbejdere={medarbejdere}
+              onSave={saveLead} 
+              onCancel={() => { setShowModal(false); setEditingLead(null); }} 
+            />
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // Liste view
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>📥 Indbakke</h1>
+        {canEdit && (
+          <button onClick={() => { setEditingLead(null); setShowModal(true); }} style={STYLES.primaryBtn}>
+            + Nyt lead
+          </button>
+        )}
+      </div>
+
+      {/* Status badges */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {Object.entries(statusConfig).map(([key, config]) => (
+          <button
+            key={key}
+            onClick={() => setFilterStatus(filterStatus === key ? 'alle' : key)}
+            style={{
+              padding: '8px 16px',
+              borderRadius: 8,
+              border: `2px solid ${config.color}`,
+              background: filterStatus === key ? config.color : config.bg,
+              color: filterStatus === key ? 'white' : config.color,
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6
+            }}
+          >
+            {config.icon} {config.label}
+            <span style={{ 
+              background: filterStatus === key ? 'rgba(255,255,255,0.3)' : config.color,
+              color: filterStatus === key ? 'white' : 'white',
+              padding: '2px 8px',
+              borderRadius: 10,
+              fontSize: 11
+            }}>
+              {statusCounts[key]}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Søgning og filtre */}
+      <div style={{ ...STYLES.card, marginBottom: 24, padding: 16 }}>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            placeholder="🔍 Søg i navn, email, firma, emne..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ ...STYLES.input, flex: 1, minWidth: 250 }}
+          />
+          <select value={filterKilde} onChange={(e) => setFilterKilde(e.target.value)} style={{ ...STYLES.select, minWidth: 140 }}>
+            <option value="alle">Alle kilder</option>
+            <option value="manual">✏️ Manuel</option>
+            <option value="email">📧 E-mail</option>
+            <option value="form">📝 Formular</option>
+          </select>
+          <select value={filterAnsvarlig} onChange={(e) => setFilterAnsvarlig(e.target.value)} style={{ ...STYLES.select, minWidth: 160 }}>
+            <option value="alle">Alle ansvarlige</option>
+            <option value="unassigned">Ikke tildelt</option>
+            {medarbejdere.map(m => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+          {(filterStatus !== 'alle' || filterKilde !== 'alle' || filterAnsvarlig !== 'alle' || search) && (
+            <button onClick={() => { setFilterStatus('alle'); setFilterKilde('alle'); setFilterAnsvarlig('alle'); setSearch(''); }} style={{ ...STYLES.secondaryBtn, padding: '8px 12px' }}>
+              ✕ Nulstil
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tabel */}
+      <div style={{ ...STYLES.card, padding: 0, overflow: 'hidden' }}>
+        {filteredLeads.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 48, color: COLORS.textLight }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>📥</div>
+            <p style={{ fontSize: 16, marginBottom: 8 }}>Ingen leads fundet</p>
+            <p style={{ fontSize: 14 }}>Opret et nyt lead eller justér dine filtre</p>
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: COLORS.bg }}>
+                <th style={STYLES.th}>Dato</th>
+                <th style={STYLES.th}>Navn</th>
+                <th style={STYLES.th}>Emne</th>
+                <th style={STYLES.th}>Kilde</th>
+                <th style={STYLES.th}>Status</th>
+                <th style={STYLES.th}>Prioritet</th>
+                <th style={STYLES.th}>Ansvarlig</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredLeads.map(lead => {
+                const status = statusConfig[lead.status] || statusConfig.new;
+                const kilde = kildeConfig[lead.source] || kildeConfig.manual;
+                const priority = priorityConfig[lead.priority] || priorityConfig.normal;
+                return (
+                  <tr 
+                    key={lead.id} 
+                    onClick={() => setSelectedLead(lead)}
+                    style={{ 
+                      borderTop: `1px solid ${COLORS.border}`, 
+                      cursor: 'pointer',
+                      background: lead.status === 'new' ? '#FEFCE8' : 'transparent'
+                    }}
+                  >
+                    <td style={STYLES.td}>
+                      <div style={{ fontSize: 13, color: COLORS.textLight }}>
+                        {new Date(lead.created_at).toLocaleDateString('da-DK')}
+                      </div>
+                      <div style={{ fontSize: 11, color: COLORS.textLight }}>
+                        {new Date(lead.created_at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </td>
+                    <td style={STYLES.td}>
+                      <div style={{ fontWeight: 600 }}>{lead.name || lead.company || 'Ukendt'}</div>
+                      {lead.email && <div style={{ fontSize: 12, color: COLORS.textLight }}>{lead.email}</div>}
+                    </td>
+                    <td style={STYLES.td}>
+                      <div style={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {lead.subject || '-'}
+                      </div>
+                    </td>
+                    <td style={STYLES.td}>
+                      <span title={kilde.label}>{kilde.icon}</span>
+                    </td>
+                    <td style={STYLES.td}>
+                      <span style={{ 
+                        padding: '4px 10px', 
+                        borderRadius: 6, 
+                        fontSize: 12, 
+                        fontWeight: 600,
+                        background: status.bg, 
+                        color: status.color 
+                      }}>
+                        {status.icon} {status.label}
+                      </span>
+                    </td>
+                    <td style={STYLES.td}>
+                      <span style={{ 
+                        padding: '2px 8px', 
+                        borderRadius: 4, 
+                        fontSize: 11, 
+                        fontWeight: 500,
+                        background: priority.bg, 
+                        color: priority.color 
+                      }}>
+                        {priority.label}
+                      </span>
+                    </td>
+                    <td style={STYLES.td}>
+                      {lead.assigned_profile?.name || <span style={{ color: COLORS.textLight }}>-</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Modal */}
+      {showModal && (
+        <Modal title={editingLead ? 'Rediger lead' : 'Nyt lead'} onClose={() => { setShowModal(false); setEditingLead(null); }}>
+          <LeadForm 
+            initial={editingLead} 
+            medarbejdere={medarbejdere}
+            onSave={saveLead} 
+            onCancel={() => { setShowModal(false); setEditingLead(null); }} 
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// Lead Form
+function LeadForm({ initial, medarbejdere, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    source: initial?.source || 'manual',
+    status: initial?.status || 'new',
+    name: initial?.name || '',
+    email: initial?.email || '',
+    phone: initial?.phone || '',
+    company: initial?.company || '',
+    cvr: initial?.cvr || '',
+    address: initial?.address || '',
+    zipcode: initial?.zipcode || '',
+    city: initial?.city || '',
+    subject: initial?.subject || '',
+    message: initial?.message || '',
+    assigned_to: initial?.assigned_to || '',
+    priority: initial?.priority || 'normal',
+    notes: initial?.notes || ''
+  });
+
+  const handleSubmit = () => {
+    if (!form.name && !form.company && !form.email) {
+      alert('Angiv mindst navn, firma eller email');
+      return;
+    }
+    onSave(form);
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={STYLES.label}>Kilde</label>
+          <select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} style={STYLES.select}>
+            <option value="manual">✏️ Manuel</option>
+            <option value="email">📧 E-mail</option>
+            <option value="form">📝 Formular</option>
+          </select>
+        </div>
+        <div>
+          <label style={STYLES.label}>Prioritet</label>
+          <select value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })} style={STYLES.select}>
+            <option value="low">Lav</option>
+            <option value="normal">Normal</option>
+            <option value="high">Høj</option>
+            <option value="urgent">Haster</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textLight, marginBottom: 12 }}>KONTAKTINFO</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={STYLES.label}>Navn</label>
+            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={STYLES.input} placeholder="Fornavn Efternavn" />
+          </div>
+          <div>
+            <label style={STYLES.label}>Firma</label>
+            <input value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} style={STYLES.input} placeholder="Firmanavn" />
+          </div>
+          <div>
+            <label style={STYLES.label}>E-mail</label>
+            <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={STYLES.input} placeholder="email@example.dk" />
+          </div>
+          <div>
+            <label style={STYLES.label}>Telefon</label>
+            <input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} style={STYLES.input} placeholder="12 34 56 78" />
+          </div>
+          <div>
+            <label style={STYLES.label}>CVR</label>
+            <input value={form.cvr} onChange={e => setForm({ ...form, cvr: e.target.value })} style={STYLES.input} placeholder="12345678" />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textLight, marginBottom: 12 }}>ADRESSE</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={STYLES.label}>Adresse</label>
+            <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} style={STYLES.input} placeholder="Vejnavn 123" />
+          </div>
+          <div>
+            <label style={STYLES.label}>Postnr</label>
+            <input value={form.zipcode} onChange={e => setForm({ ...form, zipcode: e.target.value })} style={STYLES.input} placeholder="1234" />
+          </div>
+          <div>
+            <label style={STYLES.label}>By</label>
+            <input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} style={STYLES.input} placeholder="København" />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textLight, marginBottom: 12 }}>HENVENDELSE</div>
+        <div>
+          <label style={STYLES.label}>Emne</label>
+          <input value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} style={STYLES.input} placeholder="Hvad handler henvendelsen om?" />
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <label style={STYLES.label}>Besked</label>
+          <textarea value={form.message} onChange={e => setForm({ ...form, message: e.target.value })} style={{ ...STYLES.input, minHeight: 100 }} placeholder="Kundens besked..." />
+        </div>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textLight, marginBottom: 12 }}>INTERN</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={STYLES.label}>Ansvarlig</label>
+            <select value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })} style={STYLES.select}>
+              <option value="">- Ikke tildelt -</option>
+              {medarbejdere.map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={STYLES.label}>Status</label>
+            <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} style={STYLES.select}>
+              <option value="new">🆕 Ny</option>
+              <option value="qualified">✅ Kvalificeret</option>
+              <option value="rejected">❌ Afvist</option>
+            </select>
+          </div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <label style={STYLES.label}>Interne noter</label>
+          <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} style={{ ...STYLES.input, minHeight: 60 }} placeholder="Noter til intern brug..." />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 8, borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem ændringer' : 'Opret lead'}</button>
+      </div>
     </div>
   );
 }
@@ -899,6 +1627,11 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const [showPakkeVaelger, setShowPakkeVaelger] = useState(false);
   const [showProduktVaelger, setShowProduktVaelger] = useState(false);
   const [marginSettings, setMarginSettings] = useState(null);
+  
+  // Sektioner state (præsentationslag)
+  const [sektioner, setSektioner] = useState([]);
+  const [showSektionModal, setShowSektionModal] = useState(false);
+  const [editingSektion, setEditingSektion] = useState(null);
 
   // Søgning, filtrering, sortering
   const [search, setSearch] = useState('');
@@ -934,10 +1667,11 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     }
   }, [selectedProjekt?.id]);
 
-  // Load linjer når tilbud vælges
+  // Load linjer og sektioner når tilbud vælges
   useEffect(() => {
     if (selectedTilbud) {
       loadTilbudLinjer(selectedTilbud.id);
+      loadSektioner(selectedTilbud.id);
     }
   }, [selectedTilbud?.id]);
 
@@ -1079,6 +1813,87 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
     setTilbudLinjer(data || []);
   };
 
+  const loadSektioner = async (tilbudId) => {
+    const { data, error } = await supabase
+      .from('quote_sections')
+      .select('*')
+      .eq('quote_id', tilbudId)
+      .order('sort_order');
+    if (error) { console.error('Fejl ved load af sektioner:', error); return; }
+    setSektioner(data || []);
+  };
+
+  const saveSektion = async (form) => {
+    const payload = {
+      quote_id: selectedTilbud.id,
+      title: form.title,
+      description: form.description || null,
+      icon: form.icon || '📦',
+      sort_order: form.sort_order || sektioner.length
+    };
+
+    if (editingSektion) {
+      const { error } = await supabase.from('quote_sections').update(payload).eq('id', editingSektion.id);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    } else {
+      const { error } = await supabase.from('quote_sections').insert([payload]);
+      if (error) { alert('Fejl: ' + error.message); return; }
+    }
+    setShowSektionModal(false);
+    setEditingSektion(null);
+    loadSektioner(selectedTilbud.id);
+  };
+
+  const deleteSektion = async (sektion) => {
+    if (!confirm(`Slet sektion "${sektion.title}"?\n\nLinjer i denne sektion vil blive fjernet fra sektionen, men IKKE slettet.`)) return;
+    // Fjern section_id fra linjer
+    await supabase.from('quote_lines').update({ section_id: null }).eq('section_id', sektion.id);
+    const { error } = await supabase.from('quote_sections').delete().eq('id', sektion.id);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadSektioner(selectedTilbud.id);
+    loadTilbudLinjer(selectedTilbud.id);
+  };
+
+  const updateLinjeSektion = async (linjeId, sectionId) => {
+    const { error } = await supabase.from('quote_lines').update({ section_id: sectionId || null }).eq('id', linjeId);
+    if (error) { alert('Fejl: ' + error.message); return; }
+    loadTilbudLinjer(selectedTilbud.id);
+    updateSektionSubtotals();
+  };
+
+  const updateSektionSubtotals = async () => {
+    for (const sektion of sektioner) {
+      const linjerISektion = tilbudLinjer.filter(l => l.section_id === sektion.id);
+      const subtotal = linjerISektion.reduce((sum, l) => sum + (l.quantity * l.sale_price), 0);
+      await supabase.from('quote_sections').update({ subtotal }).eq('id', sektion.id);
+    }
+    loadSektioner(selectedTilbud.id);
+  };
+
+  const updateTilbudTemplate = async (templateType) => {
+    await supabase.from('quotes').update({ template_type: templateType }).eq('id', selectedTilbud.id);
+    setSelectedTilbud({ ...selectedTilbud, template_type: templateType });
+    loadTilbud(selectedProjekt.id);
+  };
+
+  const updateTilbudDisplayMode = async (displayMode) => {
+    await supabase.from('quotes').update({ display_mode: displayMode }).eq('id', selectedTilbud.id);
+    setSelectedTilbud({ ...selectedTilbud, display_mode: displayMode });
+    loadTilbud(selectedProjekt.id);
+  };
+
+  const updateTilbudShowDetails = async (showDetails) => {
+    await supabase.from('quotes').update({ show_section_details: showDetails }).eq('id', selectedTilbud.id);
+    setSelectedTilbud({ ...selectedTilbud, show_section_details: showDetails });
+    loadTilbud(selectedProjekt.id);
+  };
+
+  const updateDisplayMode = async (mode) => {
+    await supabase.from('quotes').update({ display_mode: mode }).eq('id', selectedTilbud.id);
+    setSelectedTilbud({ ...selectedTilbud, display_mode: mode });
+    loadTilbud(selectedProjekt.id);
+  };
+
   const saveTilbud = async (form) => {
     const payload = {
       project_id: selectedProjekt.id,
@@ -1087,6 +1902,9 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
       total_price: parseFloat(form.total_price) || 0,
       status: form.status || 'kladde',
       show_lines: form.show_lines !== false,
+      template_type: form.template_type || 'erhverv',
+      display_mode: form.display_mode || 'fuld',
+      show_section_details: form.show_section_details || false,
       updated_at: new Date().toISOString()
     };
 
@@ -1123,6 +1941,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const saveTilbudLinje = async (form) => {
     const payload = {
       quote_id: selectedTilbud.id,
+      section_id: form.section_id || null,
       product_id: form.product_id || null,
       type: form.type || 'materiale',
       title: form.title,
@@ -1438,20 +2257,262 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
   const typeColors = { materiale: '#3B82F6', timer: '#F59E0B', ydelse: '#8B5CF6' };
 
   const downloadTilbudPDF = async (t) => {
-    // Hent linjer for PDF
+    // Hent linjer og sektioner
     const { data: linjer } = await supabase.from('quote_lines').select('*').eq('quote_id', t.id).eq('show_on_quote', true).order('sort_order');
+    const { data: sektionerData } = await supabase.from('quote_sections').select('*').eq('quote_id', t.id).order('sort_order');
     const kunde = selectedProjekt.customers;
-    const showLines = t.show_lines && linjer && linjer.length > 0;
     const totalPrice = Number(t.total_price);
     const dato = new Date(t.created_at).toLocaleDateString('da-DK', { year: 'numeric', month: 'long', day: 'numeric' });
+    
+    // Template type og display mode
+    const templateType = t.template_type || 'erhverv';
+    const displayMode = t.display_mode || 'fuld';
+    const showSectionDetails = t.show_section_details || false;
+    const sektioner = sektionerData || [];
+    
+    // Beregn sektions-subtotals
+    const sektionerMedPriser = sektioner.map(s => {
+      const sektionLinjer = (linjer || []).filter(l => l.section_id === s.id);
+      const subtotal = sektionLinjer.reduce((sum, l) => sum + (l.quantity * l.sale_price), 0);
+      return { ...s, subtotal, linjer: sektionLinjer };
+    });
+    
+    // Linjer uden sektion
+    const linjerUdenSektion = (linjer || []).filter(l => !l.section_id);
+    
+    const printWindow = window.open('', '_blank');
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // SALG (PRIVAT) SKABELON - Fokuserer på løsningen, ikke detaljer
+    // ═══════════════════════════════════════════════════════════════════
+    if (templateType === 'salg') {
+      
+      // Generér sektioner HTML baseret på displayMode
+      const sektionerHtml = displayMode === 'kun_total' ? '' : 
+        displayMode === 'punkter' ? `
+          <div style="margin-bottom: 30px;">
+            ${sektionerMedPriser.length > 0 ? sektionerMedPriser.map(s => `
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--gray-200);">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <span style="font-size: 24px;">${s.icon || '📦'}</span>
+                  <span style="font-weight: 600;">${s.title}</span>
+                </div>
+                <span style="font-weight: 600; color: var(--navy);">${s.subtotal.toLocaleString('da-DK')} kr.</span>
+              </div>
+            `).join('') : `
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 0;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <span style="font-size: 24px;">☀️</span>
+                  <span style="font-weight: 600;">Komplet solcelleløsning</span>
+                </div>
+                <span style="font-weight: 600; color: var(--navy);">${totalPrice.toLocaleString('da-DK')} kr.</span>
+              </div>
+            `}
+          </div>
+        ` : `
+          ${sektionerMedPriser.length > 0 ? sektionerMedPriser.map(s => `
+            <div class="solution-card">
+              <div class="solution-header">
+                <div class="solution-icon">${s.icon || '📦'}</div>
+                <div class="solution-content">
+                  <div class="solution-title">${s.title}</div>
+                  ${showSectionDetails && s.description ? `<div class="solution-desc">${s.description}</div>` : ''}
+                </div>
+                <div class="solution-price">
+                  <div class="solution-price-value">${s.subtotal.toLocaleString('da-DK')} kr.</div>
+                </div>
+              </div>
+            </div>
+          `).join('') : `
+            <div class="solution-card">
+              <div class="solution-header">
+                <div class="solution-icon">☀️</div>
+                <div class="solution-content">
+                  <div class="solution-title">Komplet solcelleløsning</div>
+                  <div class="solution-desc">Alt inkluderet: Materialer, installation og idriftsættelse</div>
+                </div>
+                <div class="solution-price">
+                  <div class="solution-price-value">${totalPrice.toLocaleString('da-DK')} kr.</div>
+                </div>
+              </div>
+            </div>
+          `}
+        `;
+      
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>EltaSolar Tilbud - ${t.title}</title>
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            :root {
+              --navy: #1E3A5F;
+              --navy-dark: #152942;
+              --gold: #F59E0B;
+              --white: #FFFFFF;
+              --gray-50: #F9FAFB;
+              --gray-200: #E5E7EB;
+              --gray-500: #6B7280;
+              --gray-700: #374151;
+              --green: #059669;
+            }
+            body { font-family: 'Inter', -apple-system, sans-serif; color: var(--gray-700); line-height: 1.6; }
+            .page { width: 210mm; min-height: 297mm; padding: 0; page-break-after: always; position: relative; }
+            .page:last-child { page-break-after: auto; }
+            
+            /* Hero */
+            .hero { background: linear-gradient(135deg, var(--navy) 0%, var(--navy-dark) 100%); color: white; min-height: 297mm; display: flex; flex-direction: column; }
+            .hero-header { padding: 40px 50px; display: flex; justify-content: space-between; align-items: flex-start; }
+            .logo { font-size: 36px; font-weight: 800; }
+            .logo-elta { color: white; }
+            .logo-solar { color: var(--gold); }
+            .badge { background: var(--gold); color: var(--navy-dark); padding: 10px 24px; border-radius: 50px; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 2px; }
+            .hero-content { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 40px 50px 60px; }
+            .hero-icon { font-size: 72px; margin-bottom: 24px; }
+            .hero-title { font-size: 38px; font-weight: 800; line-height: 1.2; margin-bottom: 12px; max-width: 550px; }
+            .hero-subtitle { font-size: 18px; color: rgba(255,255,255,0.7); margin-bottom: 40px; }
+            .price-box { background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 35px 55px; }
+            .price-label { font-size: 13px; text-transform: uppercase; letter-spacing: 3px; color: var(--gold); margin-bottom: 8px; font-weight: 600; }
+            .price { font-size: 52px; font-weight: 800; }
+            .price-note { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 8px; }
+            .hero-footer { background: rgba(0,0,0,0.2); padding: 20px 50px; display: flex; justify-content: center; gap: 40px; font-size: 13px; color: rgba(255,255,255,0.8); }
+            
+            /* Content page */
+            .content { padding: 50px; }
+            .content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 3px solid var(--navy); }
+            .content-logo { font-size: 24px; font-weight: 800; }
+            .content-ref { font-size: 12px; color: var(--gray-500); text-align: right; }
+            .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; color: var(--gold); margin-bottom: 20px; }
+            
+            /* Info cards */
+            .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 40px; }
+            .info-card { background: var(--gray-50); border-radius: 12px; padding: 24px; }
+            .info-card-icon { font-size: 28px; margin-bottom: 12px; }
+            .info-card-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--gray-500); margin-bottom: 6px; }
+            .info-card-value { font-size: 15px; font-weight: 600; color: var(--navy); }
+            .info-card-sub { font-size: 13px; color: var(--gray-500); margin-top: 4px; }
+            
+            /* Solution sections */
+            .solution-card { background: white; border: 2px solid var(--gray-200); border-radius: 16px; padding: 28px; margin-bottom: 20px; }
+            .solution-header { display: flex; align-items: flex-start; gap: 16px; }
+            .solution-icon { font-size: 36px; }
+            .solution-content { flex: 1; }
+            .solution-title { font-size: 18px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+            .solution-desc { font-size: 14px; color: var(--gray-500); line-height: 1.6; }
+            .solution-price { text-align: right; }
+            .solution-price-value { font-size: 20px; font-weight: 700; color: var(--navy); }
+            
+            /* Total box */
+            .total-box { background: linear-gradient(135deg, var(--green) 0%, #047857 100%); border-radius: 16px; padding: 30px 35px; color: white; display: flex; justify-content: space-between; align-items: center; margin-top: 30px; }
+            .total-label { font-size: 18px; font-weight: 600; }
+            .total-sub { font-size: 13px; opacity: 0.8; margin-top: 4px; }
+            .total-price { font-size: 32px; font-weight: 800; }
+            
+            /* Footer */
+            .page-footer { position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 50px; background: var(--gray-50); border-top: 1px solid var(--gray-200); display: flex; justify-content: space-between; font-size: 10px; color: var(--gray-500); }
+            
+            @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } .page { margin: 0; } }
+          </style>
+        </head>
+        <body>
+          <!-- SIDE 1: HERO -->
+          <div class="page hero">
+            <div class="hero-header">
+              <div>
+                <div class="logo"><span class="logo-elta">Elta</span><span class="logo-solar">Solar</span></div>
+                <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 4px; letter-spacing: 1px;">FRA SOL TIL STIKKONTAKT</div>
+              </div>
+              <div class="badge">Tilbud</div>
+            </div>
+            <div class="hero-content">
+              <div class="hero-icon">☀️</div>
+              <h1 class="hero-title">${t.title}</h1>
+              <p class="hero-subtitle">Et personligt tilbud til ${kunde?.company || kunde?.name || 'dig'}</p>
+              <div class="price-box">
+                <div class="price-label">Samlet investering</div>
+                <div class="price">${totalPrice.toLocaleString('da-DK')} kr.</div>
+                <div class="price-note">Inkl. moms • Alt inkluderet</div>
+              </div>
+            </div>
+            <div class="hero-footer">
+              <span>📅 ${dato}</span>
+              <span>📋 Ref: ${t.id.slice(0,8).toUpperCase()}</span>
+              <span>⏰ Gyldigt i 30 dage</span>
+            </div>
+          </div>
+          
+          <!-- SIDE 2: LØSNINGEN -->
+          <div class="page content">
+            <div class="content-header">
+              <div class="content-logo"><span class="logo-elta">Elta</span><span class="logo-solar">Solar</span></div>
+              <div class="content-ref">Tilbudsnr: ${t.id.slice(0,8).toUpperCase()}<br>${dato}</div>
+            </div>
+            
+            <div class="section-title">Dit projekt</div>
+            <div class="info-grid">
+              <div class="info-card">
+                <div class="info-card-icon">👤</div>
+                <div class="info-card-label">Kunde</div>
+                <div class="info-card-value">${kunde?.company || kunde?.name || '-'}</div>
+                <div class="info-card-sub">${kunde?.address || ''} ${kunde?.zip || ''} ${kunde?.city || ''}</div>
+              </div>
+              <div class="info-card">
+                <div class="info-card-icon">📍</div>
+                <div class="info-card-label">Installation</div>
+                <div class="info-card-value">${selectedProjekt.name}</div>
+                <div class="info-card-sub">${selectedProjekt.address || ''} ${selectedProjekt.zip || ''} ${selectedProjekt.city || ''}</div>
+              </div>
+            </div>
+            
+            ${t.description ? `
+            <div style="background: var(--navy); color: white; border-radius: 12px; padding: 24px; margin-bottom: 40px;">
+              <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: var(--gold); margin-bottom: 8px;">Om dette tilbud</div>
+              <div style="font-size: 14px; line-height: 1.7;">${t.description}</div>
+            </div>
+            ` : ''}
+            
+            ${displayMode !== 'kun_total' ? `<div class="section-title">Din løsning indeholder</div>` : ''}
+            
+            ${sektionerHtml}
+            
+            <div class="total-box">
+              <div>
+                <div class="total-label">✨ Samlet pris inkl. moms</div>
+                <div class="total-sub">Klar til at komme i gang? Kontakt os!</div>
+              </div>
+              <div class="total-price">${totalPrice.toLocaleString('da-DK')} kr.</div>
+            </div>
+            
+            <div class="page-footer">
+              <div>EltaSolar ApS • CVR: 12345678 • kontakt@eltasolar.dk • Tlf: 12 34 56 78</div>
+              <div>Side 2 af 2</div>
+            </div>
+          </div>
+        </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+      return;
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // ERHVERV (TEKNISK) SKABELON - Detaljeret brochure med linjer
+    // ═══════════════════════════════════════════════════════════════════
+    // displayMode: 'fuld' = alle detaljer, 'punkter' = bullet points, 'kun_total' = kun total
+    const showLines = displayMode === 'fuld' && linjer && linjer.length > 0;
+    const showBullets = displayMode === 'punkter' && linjer && linjer.length > 0;
     
     // Kategoriser linjer
     const materialer = (linjer || []).filter(l => l.type === 'materiale');
     const timer = (linjer || []).filter(l => l.type === 'timer');
     const ydelser = (linjer || []).filter(l => l.type === 'ydelse');
     
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
+    // Åbn nyt vindue for erhverv-skabelon
+    const erhvervWindow = window.open('', '_blank');
+    erhvervWindow.document.write(`
       <!DOCTYPE html>
       <html>
       <head>
@@ -2063,9 +3124,81 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
           
           <div class="page-footer">
             <div>EltaSolar ApS • CVR: 12345678 • kontakt@eltasolar.dk • Tlf: 12 34 56 78</div>
-            <div>Side 2 af ${showLines ? '3' : '2'}</div>
+            <div>Side 2 af ${(showLines || showBullets) ? '3' : '2'}</div>
           </div>
         </div>
+        
+        ${showBullets ? `
+        <!-- ═══════════════════════════════════════════════════════════════════
+             PAGE 3: SPECIFIKATION (BULLET POINTS)
+             ═══════════════════════════════════════════════════════════════════ -->
+        <div class="page page-content">
+          <div class="content-header">
+            <div class="content-logo"><span class="logo-elta">Elta</span><span class="logo-solar">Solar</span></div>
+            <div class="content-ref">Tilbudsnr: ${t.id.slice(0,8).toUpperCase()}<br>${dato}</div>
+          </div>
+          
+          <div class="section-title">Leverancen indeholder</div>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px;">
+            ${materialer.length > 0 ? `
+            <div>
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;">
+                <span style="font-size: 24px;">🔩</span>
+                <span style="font-weight: 700; color: var(--navy);">Materialer</span>
+              </div>
+              <ul style="list-style: none; padding: 0;">
+                ${materialer.map(l => `<li style="padding: 8px 0; border-bottom: 1px solid var(--gray-200);">• ${l.title}</li>`).join('')}
+              </ul>
+            </div>
+            ` : ''}
+            
+            ${timer.length > 0 ? `
+            <div>
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;">
+                <span style="font-size: 24px;">⏱️</span>
+                <span style="font-weight: 700; color: var(--navy);">Arbejde inkluderet</span>
+              </div>
+              <ul style="list-style: none; padding: 0;">
+                ${timer.map(l => `<li style="padding: 8px 0; border-bottom: 1px solid var(--gray-200);">• ${l.title}</li>`).join('')}
+              </ul>
+            </div>
+            ` : ''}
+          </div>
+          
+          ${ydelser.length > 0 ? `
+          <div style="margin-bottom: 30px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;">
+              <span style="font-size: 24px;">📋</span>
+              <span style="font-weight: 700; color: var(--navy);">Ydelser</span>
+            </div>
+            <ul style="list-style: none; padding: 0;">
+              ${ydelser.map(l => `<li style="padding: 8px 0; border-bottom: 1px solid var(--gray-200);">• ${l.title}</li>`).join('')}
+            </ul>
+          </div>
+          ` : ''}
+          
+          <div class="totals-section">
+            <div class="totals-row total">
+              <span class="label">Samlet pris inkl. moms</span>
+              <span class="value">${totalPrice.toLocaleString('da-DK', { minimumFractionDigits: 2 })} kr.</span>
+            </div>
+          </div>
+          
+          <div class="validity-banner">
+            <div class="validity-icon">⏰</div>
+            <div>
+              <div class="validity-text">Dette tilbud er gyldigt i 30 dage</div>
+              <div class="validity-subtext">Ved accept bedes tilbudsnummer ${t.id.slice(0,8).toUpperCase()} anføres</div>
+            </div>
+          </div>
+          
+          <div class="page-footer">
+            <div>EltaSolar ApS • CVR: 12345678 • kontakt@eltasolar.dk • Tlf: 12 34 56 78</div>
+            <div>Side 3 af 3</div>
+          </div>
+        </div>
+        ` : ''}
         
         ${showLines ? `
         <!-- ═══════════════════════════════════════════════════════════════════
@@ -2177,8 +3310,8 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
       </body>
       </html>
     `);
-    printWindow.document.close();
-    printWindow.print();
+    erhvervWindow.document.close();
+    erhvervWindow.print();
   };
 
   const tilbudStatusColors = {
@@ -2431,17 +3564,157 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
           </div>
         )}
 
-        {/* Vis linjer toggle - kun for kladde */}
+        {/* Præsentationsindstillinger - kun for kladde */}
         {canManage && canEdit && (
-          <div style={{ ...STYLES.card, marginBottom: 24, padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <strong>Vis linjer på PDF til kunde</strong>
-              <div style={{ fontSize: 13, color: COLORS.textLight }}>Når slået fra vises kun totalpris på PDF</div>
+          <div style={{ ...STYLES.card, marginBottom: 24 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, marginTop: 0, marginBottom: 16 }}>🎨 Præsentation</h3>
+            
+            {/* Skabelonvalg */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textLight, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Skabelon</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div 
+                  onClick={() => updateTilbudTemplate('salg')}
+                  style={{ 
+                    padding: 16, borderRadius: 10, cursor: 'pointer',
+                    border: `2px solid ${selectedTilbud.template_type === 'salg' ? COLORS.primary : COLORS.border}`,
+                    background: selectedTilbud.template_type === 'salg' ? '#EEF2FF' : 'white'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 24 }}>🏠</span>
+                    <div>
+                      <div style={{ fontWeight: 600 }}>Salg (privat)</div>
+                      <div style={{ fontSize: 11, color: COLORS.textLight }}>Sektioner, beskrivelser</div>
+                    </div>
+                  </div>
+                </div>
+                <div 
+                  onClick={() => updateTilbudTemplate('erhverv')}
+                  style={{ 
+                    padding: 16, borderRadius: 10, cursor: 'pointer',
+                    border: `2px solid ${selectedTilbud.template_type === 'erhverv' ? COLORS.primary : COLORS.border}`,
+                    background: selectedTilbud.template_type === 'erhverv' ? '#EEF2FF' : 'white'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 24 }}>🏢</span>
+                    <div>
+                      <div style={{ fontWeight: 600 }}>Erhverv (teknisk)</div>
+                      <div style={{ fontSize: 11, color: COLORS.textLight }}>Linjer, mængder, priser</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-              <input type="checkbox" checked={selectedTilbud.show_lines !== false} onChange={toggleShowLines} />
-              <span>{selectedTilbud.show_lines !== false ? 'Vis linjer' : 'Kun total'}</span>
-            </label>
+
+            {/* Visnings-tilstand */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.textLight, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Detaljeniveau på PDF</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                {[
+                  { key: 'fuld', icon: '📋', label: 'Fuld', desc: selectedTilbud.template_type === 'salg' ? 'Sektioner + beskrivelser' : 'Alle linjer i tabel' },
+                  { key: 'punkter', icon: '📝', label: 'Punkter', desc: selectedTilbud.template_type === 'salg' ? 'Kun sektionstitler' : 'Kun linjetitler' },
+                  { key: 'kun_total', icon: '💰', label: 'Kun total', desc: 'Ingen specifikation' }
+                ].map(mode => (
+                  <div 
+                    key={mode.key}
+                    onClick={() => updateDisplayMode(mode.key)}
+                    style={{ 
+                      padding: 12, borderRadius: 8, cursor: 'pointer', textAlign: 'center',
+                      border: `2px solid ${(selectedTilbud.display_mode || 'fuld') === mode.key ? COLORS.primary : COLORS.border}`,
+                      background: (selectedTilbud.display_mode || 'fuld') === mode.key ? '#EEF2FF' : 'white'
+                    }}
+                  >
+                    <div style={{ fontSize: 20, marginBottom: 4 }}>{mode.icon}</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{mode.label}</div>
+                    <div style={{ fontSize: 10, color: COLORS.textLight, marginTop: 2 }}>{mode.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Ekstra indstillinger baseret på valg */}
+            {selectedTilbud.template_type === 'salg' && (selectedTilbud.display_mode || 'fuld') === 'fuld' && (
+              <div style={{ padding: 12, background: COLORS.bg, borderRadius: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={selectedTilbud.show_section_details === true} 
+                    onChange={(e) => updateTilbudShowDetails(e.target.checked)} 
+                  />
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>Vis sektionsbeskrivelser</div>
+                    <div style={{ fontSize: 11, color: COLORS.textLight }}>Vis beskrivende tekst under hver sektion</div>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {/* Preview boks */}
+            <div style={{ marginTop: 16, padding: 16, background: '#1E3A5F', borderRadius: 10, color: 'white' }}>
+              <div style={{ fontSize: 11, color: '#F59E0B', marginBottom: 8, fontWeight: 600 }}>PDF PREVIEW</div>
+              <div style={{ fontSize: 13 }}>
+                {selectedTilbud.template_type === 'salg' ? (
+                  (selectedTilbud.display_mode || 'fuld') === 'kun_total' ? '☀️ Hero + Samlet pris' :
+                  (selectedTilbud.display_mode || 'fuld') === 'punkter' ? '☀️ Hero + Sektionstitler + Priser' :
+                  selectedTilbud.show_section_details ? '☀️ Hero + Sektioner + Beskrivelser + Priser' : '☀️ Hero + Sektioner + Priser'
+                ) : (
+                  (selectedTilbud.display_mode || 'fuld') === 'kun_total' ? '📊 Brochure + Samlet pris' :
+                  (selectedTilbud.display_mode || 'fuld') === 'punkter' ? '📊 Brochure + Bullet-liste' :
+                  '📊 Brochure + Fuld specifikation'
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Sektioner - kun for salg-skabelon */}
+        {canManage && selectedTilbud.template_type === 'salg' && (
+          <div style={{ ...STYLES.card, marginBottom: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>📦 Sektioner ({sektioner.length})</h3>
+              {canEdit && (
+                <button onClick={() => { setEditingSektion(null); setShowSektionModal(true); }} style={STYLES.primaryBtn}>+ Ny sektion</button>
+              )}
+            </div>
+
+            {sektioner.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 24, color: COLORS.textLight, background: COLORS.bg, borderRadius: 8 }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>📦</div>
+                <p>Ingen sektioner oprettet endnu.</p>
+                <p style={{ fontSize: 13 }}>Sektioner grupperer dine linjer i salgbare "pakker" som kunden ser.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {sektioner.map(s => {
+                  const linjerISektion = tilbudLinjer.filter(l => l.section_id === s.id);
+                  const sektionTotal = linjerISektion.reduce((sum, l) => sum + (l.quantity * l.sale_price), 0);
+                  return (
+                    <div key={s.id} style={{ padding: 16, background: COLORS.bg, borderRadius: 8, border: `1px solid ${COLORS.border}` }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                          <span style={{ fontSize: 28 }}>{s.icon || '📦'}</span>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 16 }}>{s.title}</div>
+                            {s.description && <div style={{ fontSize: 13, color: COLORS.textLight, marginTop: 4 }}>{s.description}</div>}
+                            <div style={{ fontSize: 12, color: COLORS.textLight, marginTop: 8 }}>
+                              {linjerISektion.length} linjer • {sektionTotal.toLocaleString('da-DK')} kr.
+                            </div>
+                          </div>
+                        </div>
+                        {canEdit && (
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button onClick={() => { setEditingSektion(s); setShowSektionModal(true); }} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12 }}>✏️</button>
+                            <button onClick={() => deleteSektion(s)} style={{ ...STYLES.secondaryBtn, padding: '4px 8px', fontSize: 12, color: COLORS.error }}>🗑️</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -2467,6 +3740,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
               <thead><tr style={{ background: COLORS.bg }}>
                 <th style={STYLES.th}>Type</th>
                 <th style={STYLES.th}>Beskrivelse</th>
+                {selectedTilbud.template_type === 'salg' && sektioner.length > 0 && <th style={STYLES.th}>Sektion</th>}
                 <th style={{ ...STYLES.th, textAlign: 'right' }}>Antal</th>
                 {canManage && <th style={{ ...STYLES.th, textAlign: 'right' }}>Kost</th>}
                 <th style={{ ...STYLES.th, textAlign: 'right' }}>Salg</th>
@@ -2479,6 +3753,7 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
                 {tilbudLinjer.map(l => {
                   const linjeDB = calcLinjeDB(l);
                   const linjeMarginColor = getMarginColor(linjeDB.dbPct, l.type);
+                  const linjeSektion = sektioner.find(s => s.id === l.section_id);
                   return (
                     <tr key={l.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
                       <td style={STYLES.td}>
@@ -2487,6 +3762,24 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
                         </span>
                       </td>
                       <td style={STYLES.td}>{l.title}</td>
+                      {selectedTilbud.template_type === 'salg' && sektioner.length > 0 && (
+                        <td style={STYLES.td}>
+                          {canEdit ? (
+                            <select 
+                              value={l.section_id || ''} 
+                              onChange={(e) => updateLinjeSektion(l.id, e.target.value || null)}
+                              style={{ ...STYLES.select, padding: '4px 8px', fontSize: 12, minWidth: 120 }}
+                            >
+                              <option value="">- Ingen -</option>
+                              {sektioner.map(s => (
+                                <option key={s.id} value={s.id}>{s.icon} {s.title}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            linjeSektion ? `${linjeSektion.icon} ${linjeSektion.title}` : '-'
+                          )}
+                        </td>
+                      )}
                       <td style={{ ...STYLES.td, textAlign: 'right' }}>{l.quantity}</td>
                       {canManage && <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.cost_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>}
                       <td style={{ ...STYLES.td, textAlign: 'right' }}>{Number(l.sale_price).toLocaleString('da-DK', { minimumFractionDigits: 2 })}</td>
@@ -2543,6 +3836,12 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
         {showProduktVaelger && (
           <Modal title="Tilføj fra varekatalog" onClose={() => setShowProduktVaelger(false)}>
             <ProduktVaelger onSelect={addProduktTilLinje} onCancel={() => setShowProduktVaelger(false)} />
+          </Modal>
+        )}
+
+        {showSektionModal && (
+          <Modal title={editingSektion ? 'Rediger sektion' : 'Ny sektion'} onClose={() => { setShowSektionModal(false); setEditingSektion(null); }}>
+            <SektionForm initial={editingSektion} onSave={saveSektion} onCancel={() => { setShowSektionModal(false); setEditingSektion(null); }} />
           </Modal>
         )}
       </div>
@@ -3164,6 +4463,82 @@ function TilbudLinjeForm({ initial, onSave, onCancel }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
         <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
         <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem' : 'Tilføj'}</button>
+      </div>
+    </div>
+  );
+}
+
+// Sektion Form (til præsentationslag)
+function SektionForm({ initial, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    id: initial?.id || null,
+    title: initial?.title || '',
+    description: initial?.description || '',
+    icon: initial?.icon || '📦',
+    sort_order: initial?.sort_order || 0
+  });
+
+  const icons = ['📦', '⚡', '🔧', '🏠', '☀️', '🔩', '📋', '🛠️', '💡', '🔌', '🏗️', '✅', '🎯', '💼', '🚀'];
+
+  const handleSubmit = () => {
+    if (!form.title.trim()) { alert('Titel er påkrævet'); return; }
+    onSave(form);
+  };
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div>
+        <label style={STYLES.label}>Ikon</label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {icons.map(icon => (
+            <button
+              key={icon}
+              onClick={() => setForm({ ...form, icon })}
+              style={{
+                padding: '8px 12px',
+                fontSize: 20,
+                borderRadius: 8,
+                border: `2px solid ${form.icon === icon ? COLORS.primary : COLORS.border}`,
+                background: form.icon === icon ? '#EEF2FF' : 'white',
+                cursor: 'pointer'
+              }}
+            >
+              {icon}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label style={STYLES.label}>Titel *</label>
+        <input 
+          value={form.title} 
+          onChange={e => setForm({ ...form, title: e.target.value })} 
+          style={STYLES.input} 
+          placeholder="F.eks. Montering & installation" 
+        />
+      </div>
+      <div>
+        <label style={STYLES.label}>Beskrivelse (vises på PDF ved salg-skabelon)</label>
+        <textarea 
+          value={form.description} 
+          onChange={e => setForm({ ...form, description: e.target.value })} 
+          style={{ ...STYLES.input, minHeight: 80 }} 
+          placeholder="F.eks. Komplet installation af dit solcelleanlæg inkl. montering på tag, el-tilslutning og test..." 
+        />
+      </div>
+      <div style={{ padding: 16, background: COLORS.bg, borderRadius: 8 }}>
+        <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 8 }}>PREVIEW</div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <span style={{ fontSize: 32 }}>{form.icon}</span>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 16 }}>{form.title || 'Sektionstitel'}</div>
+            {form.description && <div style={{ fontSize: 13, color: COLORS.textLight, marginTop: 4 }}>{form.description}</div>}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+        <button onClick={onCancel} style={STYLES.secondaryBtn}>Annuller</button>
+        <button onClick={handleSubmit} style={STYLES.primaryBtn}>{initial ? 'Gem' : 'Opret sektion'}</button>
       </div>
     </div>
   );
