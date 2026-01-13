@@ -3,7 +3,7 @@
 // Original layout bevaret - kun funktionelle rettelser
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -41,10 +41,357 @@ const AuthContext = createContext(null);
 const useAuth = () => useContext(AuthContext);
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// KUNDEPORTAL (Magic Link Access)
+// Kunden kan se beskeder, skrive svar og se dokumenter - uden login
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function CustomerPortal({ token }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [accessData, setAccessData] = useState(null);
+  const [conversation, setConversation] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [sending, setSending] = useState(false);
+  const [entity, setEntity] = useState(null);
+  const [quotes, setQuotes] = useState([]);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    validateToken();
+  }, [token]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const validateToken = async () => {
+    try {
+      // Find token
+      const { data: tokenData, error: tokenError } = await supabase
+        .from('customer_access_tokens')
+        .select('*, conversation:conversations(*)')
+        .eq('token', token)
+        .gt('expires_at', new Date().toISOString())
+        .single();
+
+      if (tokenError || !tokenData) {
+        setError('Dette link er udløbet eller ugyldigt. Kontakt venligst virksomheden for et nyt link.');
+        setLoading(false);
+        return;
+      }
+
+      // Opdater access count
+      await supabase
+        .from('customer_access_tokens')
+        .update({ 
+          last_used_at: new Date().toISOString(),
+          access_count: (tokenData.access_count || 0) + 1
+        })
+        .eq('id', tokenData.id);
+
+      setAccessData(tokenData);
+      setConversation(tokenData.conversation);
+
+      // Load entity (lead, project, customer)
+      const conv = tokenData.conversation;
+      if (conv.entity_type === 'lead') {
+        const { data } = await supabase.from('leads').select('*').eq('id', conv.entity_id).single();
+        setEntity({ type: 'lead', data });
+      } else if (conv.entity_type === 'project') {
+        const { data } = await supabase.from('projects').select('*, customers(*)').eq('id', conv.entity_id).single();
+        setEntity({ type: 'project', data });
+        // Load quotes for project
+        const { data: quotesData } = await supabase
+          .from('quotes')
+          .select('id, title, total_price, status, created_at')
+          .eq('project_id', conv.entity_id)
+          .in('status', ['sendt', 'accepteret'])
+          .order('created_at', { ascending: false });
+        setQuotes(quotesData || []);
+      } else if (conv.entity_type === 'customer') {
+        const { data } = await supabase.from('customers').select('*').eq('id', conv.entity_id).single();
+        setEntity({ type: 'customer', data });
+      }
+
+      await loadMessages(conv.id);
+      
+      // Mark messages as read by customer
+      await supabase
+        .from('conversations')
+        .update({ unread_count_customer: 0 })
+        .eq('id', conv.id);
+
+      setLoading(false);
+    } catch (err) {
+      console.error('Portal error:', err);
+      setError('Der opstod en fejl. Prøv igen senere.');
+      setLoading(false);
+    }
+  };
+
+  const loadMessages = async (conversationId) => {
+    const { data } = await supabase
+      .from('messages')
+      .select('*, files:message_files(*)')
+      .eq('conversation_id', conversationId)
+      .eq('is_internal', false) // Kunden ser kun ikke-interne beskeder
+      .order('created_at', { ascending: true });
+    
+    setMessages(data || []);
+  };
+
+  const sendMessage = async () => {
+    if (!newMessage.trim() || !conversation || sending) return;
+    
+    setSending(true);
+    
+    const customerName = entity?.data?.name || entity?.data?.customers?.name || 'Kunde';
+    const customerEmail = entity?.data?.email || entity?.data?.customers?.email;
+    
+    const { data: msg, error: msgError } = await supabase
+      .from('messages')
+      .insert([{
+        conversation_id: conversation.id,
+        sender_type: 'customer',
+        sender_name: customerName,
+        sender_email: customerEmail,
+        content: newMessage.trim(),
+        is_internal: false
+      }])
+      .select()
+      .single();
+
+    if (msgError) {
+      alert('Kunne ikke sende besked. Prøv igen.');
+      setSending(false);
+      return;
+    }
+
+    // Opdater samtale
+    await supabase
+      .from('conversations')
+      .update({
+        last_message_at: new Date().toISOString(),
+        last_message_preview: newMessage.trim().substring(0, 100),
+        unread_count_internal: (conversation.unread_count_internal || 0) + 1
+      })
+      .eq('id', conversation.id);
+
+    // Log email notification til medarbejder
+    await supabase
+      .from('email_notifications')
+      .insert([{
+        message_id: msg.id,
+        conversation_id: conversation.id,
+        recipient_type: 'user',
+        recipient_email: 'admin@eltasolar.dk', // I produktion: hent fra assigned_to eller admin
+        recipient_name: 'EltaSolar Team',
+        status: 'pending'
+      }]);
+
+    setNewMessage('');
+    setSending(false);
+    await loadMessages(conversation.id);
+  };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', background: COLORS.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 24 }}>
+            <span style={{ fontSize: 32 }}>☀️</span>
+            <span style={{ fontWeight: 700, fontSize: 24 }}><span style={{ color: COLORS.primary }}>Elta</span><span style={{ color: COLORS.accent }}>Solar</span></span>
+          </div>
+          <p style={{ color: COLORS.textLight }}>Indlæser din side...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ minHeight: '100vh', background: COLORS.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ ...STYLES.card, maxWidth: 500, textAlign: 'center' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+          <h2 style={{ marginBottom: 16 }}>Link udløbet</h2>
+          <p style={{ color: COLORS.textLight, marginBottom: 24 }}>{error}</p>
+          <p style={{ fontSize: 14 }}>
+            📧 kontakt@eltasolar.dk<br />
+            📞 12 34 56 78
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const entityName = entity?.data?.name || entity?.data?.subject || entity?.data?.customers?.name || 'Din sag';
+
+  return (
+    <div style={{ minHeight: '100vh', background: COLORS.bg }}>
+      {/* Header */}
+      <header style={{ background: 'white', borderBottom: `1px solid ${COLORS.border}`, padding: '16px 24px' }}>
+        <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 24 }}>☀️</span>
+            <span style={{ fontWeight: 700, fontSize: 18 }}><span style={{ color: COLORS.primary }}>Elta</span><span style={{ color: COLORS.accent }}>Solar</span></span>
+          </div>
+          <div style={{ fontSize: 14, color: COLORS.textLight }}>
+            Kundeportal
+          </div>
+        </div>
+      </header>
+
+      <main style={{ maxWidth: 800, margin: '0 auto', padding: 24 }}>
+        {/* Velkomst */}
+        <div style={{ ...STYLES.card, marginBottom: 24, background: 'linear-gradient(135deg, #1E3A5F 0%, #2D5A87 100%)', color: 'white' }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, marginBottom: 8 }}>
+            Velkommen, {entity?.data?.name || entity?.data?.customers?.name || 'Kunde'}!
+          </h1>
+          <p style={{ margin: 0, opacity: 0.9 }}>
+            Her kan du følge med i din {entity?.type === 'lead' ? 'henvendelse' : entity?.type === 'project' ? 'projekt' : 'sag'} og kommunikere med os.
+          </p>
+        </div>
+
+        {/* Tilbud (kun for projekter) */}
+        {quotes.length > 0 && (
+          <div style={{ ...STYLES.card, marginBottom: 24 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0, marginBottom: 16 }}>📄 Tilbud</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {quotes.map(q => (
+                <div key={q.id} style={{ 
+                  padding: 16, 
+                  background: COLORS.bg, 
+                  borderRadius: 8,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{q.title}</div>
+                    <div style={{ fontSize: 12, color: COLORS.textLight }}>
+                      {new Date(q.created_at).toLocaleDateString('da-DK')}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 700, color: COLORS.primary }}>
+                      {Number(q.total_price).toLocaleString('da-DK')} kr.
+                    </div>
+                    <span style={{ 
+                      fontSize: 11, 
+                      padding: '2px 8px', 
+                      borderRadius: 4,
+                      background: q.status === 'accepteret' ? '#D1FAE5' : '#DBEAFE',
+                      color: q.status === 'accepteret' ? '#059669' : '#1D4ED8'
+                    }}>
+                      {q.status === 'accepteret' ? '✅ Accepteret' : '📤 Sendt'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Beskeder */}
+        <div style={STYLES.card}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0, marginBottom: 16 }}>💬 Beskeder</h2>
+          
+          <div style={{ 
+            maxHeight: 400, 
+            overflowY: 'auto', 
+            marginBottom: 16,
+            padding: 12,
+            background: COLORS.bg,
+            borderRadius: 8
+          }}>
+            {messages.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>💬</div>
+                <p>Ingen beskeder endnu</p>
+              </div>
+            ) : (
+              messages.map(msg => (
+                <div 
+                  key={msg.id} 
+                  style={{ 
+                    marginBottom: 12,
+                    padding: 12,
+                    borderRadius: 12,
+                    background: msg.sender_type === 'customer' ? '#E0E7FF' : 'white',
+                    border: `1px solid ${msg.sender_type === 'customer' ? '#818CF8' : COLORS.border}`,
+                    marginLeft: msg.sender_type === 'user' ? 0 : 24,
+                    marginRight: msg.sender_type === 'customer' ? 0 : 24
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {msg.sender_type === 'customer' ? '👤 Dig' : '👨‍💼 EltaSolar'}
+                    </span>
+                    <span style={{ fontSize: 11, color: COLORS.textLight }}>
+                      {new Date(msg.created_at).toLocaleString('da-DK', { 
+                        day: 'numeric', 
+                        month: 'short', 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                      })}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input */}
+          <div>
+            <textarea
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              placeholder="Skriv din besked her..."
+              style={{ ...STYLES.input, minHeight: 80, resize: 'vertical', marginBottom: 12 }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button 
+                onClick={sendMessage}
+                disabled={!newMessage.trim() || sending}
+                style={{ 
+                  ...STYLES.primaryBtn,
+                  opacity: !newMessage.trim() || sending ? 0.5 : 1
+                }}
+              >
+                {sending ? 'Sender...' : '📤 Send besked'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ textAlign: 'center', marginTop: 32, color: COLORS.textLight, fontSize: 13 }}>
+          <p>EltaSolar ApS • CVR: 12345678</p>
+          <p>📧 kontakt@eltasolar.dk • 📞 12 34 56 78</p>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
 
 export default function App() {
+  // Check for portal token in URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const portalToken = urlParams.get('portal') || window.location.pathname.split('/portal/')[1];
+  
+  if (portalToken) {
+    return <CustomerPortal token={portalToken} />;
+  }
+
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -458,6 +805,413 @@ function StatCard({ icon, label, value, onClick, color }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════════
+// CHAT PANEL KOMPONENT (Genbrugelig på Lead, Projekt, Kunde)
+// Kommunikationssystem med interne noter og kundebeskeder
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
+
+function ChatPanel({ entityType, entityId, entityName, customerEmail, customerName }) {
+  const { profile } = useContext(AuthContext);
+  const [conversation, setConversation] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [isInternal, setIsInternal] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [showAccessLinkModal, setShowAccessLinkModal] = useState(false);
+  const [accessToken, setAccessToken] = useState(null);
+  const messagesEndRef = useRef(null);
+
+  const canWrite = profile?.role === 'admin' || profile?.role === 'saelger' || profile?.role === 'serviceleder';
+
+  useEffect(() => {
+    if (entityId) {
+      loadOrCreateConversation();
+    }
+  }, [entityId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const loadOrCreateConversation = async () => {
+    setLoading(true);
+    
+    // Find eller opret samtale
+    let { data: conv } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('entity_type', entityType)
+      .eq('entity_id', entityId)
+      .single();
+    
+    if (!conv) {
+      // Opret ny samtale
+      const { data: newConv, error } = await supabase
+        .from('conversations')
+        .insert([{
+          entity_type: entityType,
+          entity_id: entityId,
+          subject: entityName || `${entityType} samtale`
+        }])
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('Fejl ved oprettelse af samtale:', error);
+        setLoading(false);
+        return;
+      }
+      conv = newConv;
+    }
+    
+    setConversation(conv);
+    await loadMessages(conv.id);
+    await loadAccessToken(conv.id);
+    setLoading(false);
+  };
+
+  const loadMessages = async (conversationId) => {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*, files:message_files(*)')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+    
+    if (error) {
+      console.error('Fejl ved load af beskeder:', error);
+      return;
+    }
+    setMessages(data || []);
+  };
+
+  const loadAccessToken = async (conversationId) => {
+    const { data } = await supabase
+      .from('customer_access_tokens')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    setAccessToken(data);
+  };
+
+  const sendMessage = async () => {
+    if (!newMessage.trim() || !conversation || sending) return;
+    
+    setSending(true);
+    
+    const { data: msg, error } = await supabase
+      .from('messages')
+      .insert([{
+        conversation_id: conversation.id,
+        sender_type: 'user',
+        sender_id: profile.id,
+        sender_name: profile.name,
+        sender_email: profile.email,
+        content: newMessage.trim(),
+        is_internal: isInternal
+      }])
+      .select()
+      .single();
+    
+    if (error) {
+      alert('Fejl ved afsendelse: ' + error.message);
+      setSending(false);
+      return;
+    }
+
+    // Opdater samtale
+    await supabase
+      .from('conversations')
+      .update({
+        last_message_at: new Date().toISOString(),
+        last_message_preview: newMessage.trim().substring(0, 100),
+        updated_at: new Date().toISOString(),
+        unread_count_customer: isInternal ? conversation.unread_count_customer : (conversation.unread_count_customer || 0) + 1
+      })
+      .eq('id', conversation.id);
+
+    // Log email notification (i produktion ville dette trigge en faktisk email)
+    if (!isInternal && customerEmail) {
+      await supabase
+        .from('email_notifications')
+        .insert([{
+          message_id: msg.id,
+          conversation_id: conversation.id,
+          recipient_type: 'customer',
+          recipient_email: customerEmail,
+          recipient_name: customerName,
+          status: 'pending'
+        }]);
+    }
+
+    setNewMessage('');
+    setSending(false);
+    await loadMessages(conversation.id);
+  };
+
+  const createAccessLink = async () => {
+    if (!conversation) return;
+    
+    const { data, error } = await supabase
+      .from('customer_access_tokens')
+      .insert([{
+        conversation_id: conversation.id,
+        customer_id: entityType === 'customer' ? entityId : null
+      }])
+      .select()
+      .single();
+    
+    if (error) {
+      alert('Fejl ved oprettelse af adgangslink: ' + error.message);
+      return;
+    }
+    
+    setAccessToken(data);
+    setShowAccessLinkModal(true);
+  };
+
+  const copyAccessLink = () => {
+    if (!accessToken) return;
+    const link = `${window.location.origin}/portal/${accessToken.token}`;
+    navigator.clipboard.writeText(link);
+    alert('Link kopieret til udklipsholder!');
+  };
+
+  if (loading) {
+    return (
+      <div style={{ ...STYLES.card, textAlign: 'center', padding: 48 }}>
+        <div style={{ fontSize: 32, marginBottom: 16 }}>💬</div>
+        <p style={{ color: COLORS.textLight }}>Indlæser kommunikation...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={STYLES.card}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${COLORS.border}` }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            💬 Kommunikation
+            {messages.filter(m => !m.is_internal).length > 0 && (
+              <span style={{ 
+                background: COLORS.primary, 
+                color: 'white', 
+                padding: '2px 8px', 
+                borderRadius: 10, 
+                fontSize: 11 
+              }}>
+                {messages.filter(m => !m.is_internal).length}
+              </span>
+            )}
+          </h3>
+          <p style={{ fontSize: 12, color: COLORS.textLight, margin: '4px 0 0 0' }}>
+            {messages.length} beskeder • {messages.filter(m => m.is_internal).length} interne noter
+          </p>
+        </div>
+        {canWrite && customerEmail && (
+          <button onClick={createAccessLink} style={STYLES.secondaryBtn}>
+            🔗 Kundeportal link
+          </button>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div style={{ 
+        maxHeight: 400, 
+        overflowY: 'auto', 
+        marginBottom: 16, 
+        padding: 8,
+        background: COLORS.bg,
+        borderRadius: 8
+      }}>
+        {messages.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 32, color: COLORS.textLight }}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>💬</div>
+            <p>Ingen beskeder endnu</p>
+            <p style={{ fontSize: 13 }}>Start en samtale nedenfor</p>
+          </div>
+        ) : (
+          messages.map(msg => (
+            <div 
+              key={msg.id} 
+              style={{ 
+                marginBottom: 12,
+                padding: 12,
+                borderRadius: 12,
+                background: msg.is_internal ? '#FEF3C7' : msg.sender_type === 'customer' ? '#E0E7FF' : 'white',
+                border: `1px solid ${msg.is_internal ? '#F59E0B' : msg.sender_type === 'customer' ? '#818CF8' : COLORS.border}`,
+                marginLeft: msg.sender_type === 'user' ? 24 : 0,
+                marginRight: msg.sender_type === 'customer' ? 24 : 0
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 16 }}>
+                    {msg.is_internal ? '🔒' : msg.sender_type === 'customer' ? '👤' : '👨‍💼'}
+                  </span>
+                  <div>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>
+                      {msg.sender_name || 'Ukendt'}
+                    </span>
+                    {msg.is_internal && (
+                      <span style={{ marginLeft: 8, fontSize: 10, padding: '2px 6px', background: '#F59E0B', color: 'white', borderRadius: 4 }}>
+                        INTERN
+                      </span>
+                    )}
+                    {msg.sender_type === 'customer' && (
+                      <span style={{ marginLeft: 8, fontSize: 10, padding: '2px 6px', background: '#818CF8', color: 'white', borderRadius: 4 }}>
+                        KUNDE
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <span style={{ fontSize: 11, color: COLORS.textLight }}>
+                  {new Date(msg.created_at).toLocaleString('da-DK', { 
+                    day: 'numeric', 
+                    month: 'short', 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                  })}
+                </span>
+              </div>
+              <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                {msg.content}
+              </div>
+              {msg.files && msg.files.length > 0 && (
+                <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {msg.files.map(file => (
+                    <a 
+                      key={file.id} 
+                      href={file.file_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ 
+                        fontSize: 12, 
+                        padding: '4px 8px', 
+                        background: COLORS.bg, 
+                        borderRadius: 4,
+                        color: COLORS.primary,
+                        textDecoration: 'none'
+                      }}
+                    >
+                      📎 {file.file_name}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input */}
+      {canWrite && (
+        <div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <button 
+              onClick={() => setIsInternal(false)}
+              style={{ 
+                ...STYLES.secondaryBtn, 
+                flex: 1,
+                background: !isInternal ? COLORS.primary : 'white',
+                color: !isInternal ? 'white' : COLORS.text,
+                border: `2px solid ${!isInternal ? COLORS.primary : COLORS.border}`
+              }}
+            >
+              ✉️ Besked til kunde
+            </button>
+            <button 
+              onClick={() => setIsInternal(true)}
+              style={{ 
+                ...STYLES.secondaryBtn, 
+                flex: 1,
+                background: isInternal ? '#F59E0B' : 'white',
+                color: isInternal ? 'white' : COLORS.text,
+                border: `2px solid ${isInternal ? '#F59E0B' : COLORS.border}`
+              }}
+            >
+              🔒 Intern note
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <textarea
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              placeholder={isInternal ? 'Skriv en intern note (kun synlig for medarbejdere)...' : 'Skriv en besked til kunden...'}
+              style={{ 
+                ...STYLES.input, 
+                flex: 1, 
+                minHeight: 80,
+                resize: 'vertical',
+                borderColor: isInternal ? '#F59E0B' : COLORS.border
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  sendMessage();
+                }
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+            <span style={{ fontSize: 11, color: COLORS.textLight }}>
+              {isInternal ? '🔒 Denne note er kun synlig for medarbejdere' : '✉️ Kunden modtager en email-notifikation'}
+            </span>
+            <button 
+              onClick={sendMessage} 
+              disabled={!newMessage.trim() || sending}
+              style={{ 
+                ...STYLES.primaryBtn, 
+                opacity: !newMessage.trim() || sending ? 0.5 : 1,
+                background: isInternal ? '#F59E0B' : COLORS.primary
+              }}
+            >
+              {sending ? 'Sender...' : isInternal ? '💾 Gem note' : '📤 Send besked'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Access Link Modal */}
+      {showAccessLinkModal && accessToken && (
+        <Modal title="Kundeportal Link" onClose={() => setShowAccessLinkModal(false)}>
+          <div style={{ textAlign: 'center', padding: 16 }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>🔗</div>
+            <p style={{ marginBottom: 16 }}>Send dette link til kunden, så de kan se og besvare beskeder:</p>
+            <div style={{ 
+              background: COLORS.bg, 
+              padding: 16, 
+              borderRadius: 8, 
+              fontFamily: 'monospace',
+              fontSize: 12,
+              wordBreak: 'break-all',
+              marginBottom: 16
+            }}>
+              {window.location.origin}/portal/{accessToken.token}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <button onClick={copyAccessLink} style={STYLES.primaryBtn}>
+                📋 Kopiér link
+              </button>
+              <button onClick={() => setShowAccessLinkModal(false)} style={STYLES.secondaryBtn}>
+                Luk
+              </button>
+            </div>
+            <p style={{ fontSize: 12, color: COLORS.textLight, marginTop: 16 }}>
+              Linket udløber: {new Date(accessToken.expires_at).toLocaleDateString('da-DK')}
+            </p>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════
 // INDBAKKE SYSTEM (Leads)
 // Database: leads - id, source, status, name, email, phone, company, cvr, address, zipcode, city,
 //           subject, message, assigned_to, priority, notes, converted_at, converted_customer_id, converted_project_id
@@ -841,6 +1595,17 @@ function IndbakkeSystem() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Kommunikation */}
+        <div style={{ marginTop: 24 }}>
+          <ChatPanel 
+            entityType="lead"
+            entityId={lead.id}
+            entityName={lead.subject || lead.name || 'Lead'}
+            customerEmail={lead.email}
+            customerName={lead.name || lead.company}
+          />
         </div>
 
         {/* Modal */}
@@ -1405,6 +2170,17 @@ function KunderSystem({ onNavigateToProjekt }) {
             </table>
           </div>
         )}
+
+        {/* Kommunikation */}
+        <div style={{ marginTop: 24 }}>
+          <ChatPanel 
+            entityType="customer"
+            entityId={selectedKunde.id}
+            entityName={selectedKunde.company || selectedKunde.name}
+            customerEmail={selectedKunde.email}
+            customerName={selectedKunde.name}
+          />
+        </div>
 
         {showModal && (
           <Modal title="Rediger kunde" onClose={() => { setShowModal(false); setEditingKunde(null); }}>
@@ -4087,6 +4863,17 @@ function ProjekterSystem({ initialProjektId, onProjektOpened }) {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Kommunikation */}
+        <div style={{ marginTop: 24 }}>
+          <ChatPanel 
+            entityType="project"
+            entityId={selectedProjekt.id}
+            entityName={selectedProjekt.name}
+            customerEmail={kunde?.email}
+            customerName={kunde?.name || kunde?.company}
+          />
         </div>
 
         {showModal && (
